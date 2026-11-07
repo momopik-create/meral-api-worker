@@ -1,12 +1,20 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "meral-bot-api",
-  "main": "worker.js",
-  "compatibility_date": "2024-04-01",
+  "name": "WORKER-NAME",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-02-04",
+  "observability": {
+    "enabled": true
+  },
+
+  // Add this to your wrangler.jsonc
   "kv_namespaces": [
     {
-      "binding": "MERAL_KV",
-      "id": "88d418ae655445a5ba2cdf4750ad8ed8"
+      "binding": "KV",
+      "id": "88d418ae655445a5ba2cdf4750ad8ed8",
+      
+      // Optional: preview_id used when running `wrangler dev` for local dev
+      "preview_id": "<ID_OF_PREVIEW_KV_NAMESPACE_FOR_LOCAL_DEVELOPMENT>"
     }
   ]
 }
