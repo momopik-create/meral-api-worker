@@ -4,6 +4,8 @@
 interface __BaseEnv_Env {
 	WORKFLOW_STATUS: DurableObjectNamespace<import("./worker/index").WorkflowStatusDO>;
 	MY_WORKFLOW: Workflow<Parameters<import("./worker/index").MyWorkflow['run']>[0]['payload']>;
+	GEMINI_API_KEY?: string;
+	MERAL_AUTH_TOKEN?: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -12,7 +14,10 @@ declare namespace Cloudflare {
 	}
 	interface Env extends __BaseEnv_Env {}
 }
-interface Env extends __BaseEnv_Env {}
+interface Env extends __BaseEnv_Env {
+	GEMINI_API_KEY?: string;
+	MERAL_AUTH_TOKEN?: string;
+}
 
 // Begin runtime types
 /*! *****************************************************************************
