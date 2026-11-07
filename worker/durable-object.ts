@@ -1,109 +1,189 @@
 import { DurableObject } from "cloudflare:workers";
 
 /**
- * WorkflowStatusDO - Durable Object for managing workflow state and WebSocket connections
+ * Meral SMMM Pro - Accounting Office State Schema
+ */
+export interface MeralOfficeState {
+	companies: unknown[];
+	tasks: unknown[];
+	documents: unknown[];
+	notes: unknown[];
+	chatMessages: unknown[];
+	updatedAt: number | string;
+}
+
+/**
+ * WorkflowStatusDO - Production Durable Object for Meral SMMM Pro
  *
  * Responsibilities:
- * - Accept and manage WebSocket connections using hibernation API
- * - Track step statuses for a workflow instance
- * - Broadcast updates to all connected clients
- * - Provide RPC method for workflow to update step status
+ * - Persist Meral's entire accounting office state under key "office_state"
+ * - Provide HTTP endpoints (GET /state, PUT /state) and RPC methods
+ * - Manage real-time WebSocket synchronization across PC & Telegram Mobile devices
+ * - Broadcast "state_synced" messages upon state changes
  */
 export class WorkflowStatusDO extends DurableObject {
-	private stepStatuses: Map<string, string>;
-	private currentStep: string | null;
-	private workflowStatus: "running" | "completed" | "error";
+	private cachedState: MeralOfficeState | null = null;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 
-		this.stepStatuses = new Map();
-		this.currentStep = null;
-		this.workflowStatus = "running";
-
-		// Load state from durable storage to survive hibernation/eviction
+		// Load state from durable storage
 		ctx.blockConcurrencyWhile(async () => {
-			const storedStatuses =
-				await ctx.storage.get<Record<string, string>>("stepStatuses");
-			const storedCurrent = await ctx.storage.get<string | null>("currentStep");
-			const storedWorkflowStatus = await ctx.storage.get<
-				"running" | "completed" | "error"
-			>("workflowStatus");
-
-			if (storedStatuses) {
-				this.stepStatuses = new Map(Object.entries(storedStatuses));
-			} else {
-				const steps = [
-					"process data",
-					"wait 2 seconds",
-					"wait for approval",
-					"final",
-				];
-				steps.forEach((s) => this.stepStatuses.set(s, "pending"));
-			}
-
-			this.currentStep = storedCurrent ?? null;
-			this.workflowStatus = storedWorkflowStatus ?? "running";
+			this.cachedState =
+				(await ctx.storage.get<MeralOfficeState>("office_state")) ?? null;
 		});
 	}
 
+	/**
+	 * HTTP fetch handler for Durable Object
+	 * Handles WebSocket upgrades and direct /state HTTP requests
+	 */
 	async fetch(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+
+		// 1. WebSocket Upgrade for Real-Time Sync
 		if (request.headers.get("Upgrade") === "websocket") {
 			const pair = new WebSocketPair();
 			const [client, server] = Object.values(pair);
 
-			// Use hibernation API - acceptWebSocket allows the DO to hibernate
+			// Accept WebSocket connection using hibernation API
 			this.ctx.acceptWebSocket(server);
 
-			// Send current state immediately upon connection
-			server.send(JSON.stringify(this.getStateMessage()));
+			// Immediately send current state on connection
+			const currentState =
+				this.cachedState ??
+				(await this.ctx.storage.get<MeralOfficeState>("office_state")) ??
+				null;
+
+			server.send(
+				JSON.stringify({
+					type: "state_synced",
+					data: currentState,
+					timestamp: Date.now(),
+				}),
+			);
 
 			return new Response(null, { status: 101, webSocket: client });
 		}
 
-		return new Response("Expected WebSocket", { status: 400 });
+		// 2. HTTP Route: /state
+		if (url.pathname.endsWith("/state")) {
+			// GET /state
+			if (request.method === "GET") {
+				const state =
+					this.cachedState ??
+					(await this.ctx.storage.get<MeralOfficeState>("office_state")) ??
+					null;
+				return Response.json(state);
+			}
+
+			// PUT /state
+			if (request.method === "PUT") {
+				try {
+					const body = (await request.json()) as Partial<MeralOfficeState>;
+					const validatedState = this.sanitizeState(body);
+
+					await this.ctx.storage.put("office_state", validatedState);
+					this.cachedState = validatedState;
+
+					// Broadcast "state_synced" to all connected devices
+					this.broadcast({
+						type: "state_synced",
+						data: validatedState,
+						timestamp: Date.now(),
+					});
+
+					return Response.json(validatedState);
+				} catch (err) {
+					return Response.json(
+						{
+							error: "Invalid office state payload",
+							details: err instanceof Error ? err.message : String(err),
+						},
+						{ status: 400 },
+					);
+				}
+			}
+
+			return new Response("Method Not Allowed", { status: 405 });
+		}
+
+		return new Response("Not Found", { status: 404 });
 	}
 
 	/**
-	 * RPC method called by the workflow to update step status
-	 * This is called via stub.updateStep() from the workflow
+	 * RPC Method: Get Office State
+	 */
+	async getState(): Promise<MeralOfficeState | null> {
+		if (this.cachedState) return this.cachedState;
+		this.cachedState =
+			(await this.ctx.storage.get<MeralOfficeState>("office_state")) ?? null;
+		return this.cachedState;
+	}
+
+	/**
+	 * RPC Method: Put Office State
+	 */
+	async putState(
+		body: Partial<MeralOfficeState>,
+	): Promise<MeralOfficeState> {
+		const validatedState = this.sanitizeState(body);
+		await this.ctx.storage.put("office_state", validatedState);
+		this.cachedState = validatedState;
+
+		this.broadcast({
+			type: "state_synced",
+			data: validatedState,
+			timestamp: Date.now(),
+		});
+
+		return validatedState;
+	}
+
+	/**
+	 * RPC Method: Backward compatibility for workflow step tracking
 	 */
 	async updateStep(stepName: string, status: string): Promise<void> {
-		this.stepStatuses.set(stepName, status);
-
-		if (status === "running" || status === "waiting") {
-			this.currentStep = stepName;
-		}
-
-		const allCompleted = Array.from(this.stepStatuses.values()).every(
-			(s) => s === "completed",
-		);
-		if (allCompleted) {
-			this.workflowStatus = "completed";
-			this.currentStep = null;
-		}
-
-		await this.ctx.storage.put(
-			"stepStatuses",
-			Object.fromEntries(this.stepStatuses),
-		);
-		await this.ctx.storage.put("currentStep", this.currentStep);
-		await this.ctx.storage.put("workflowStatus", this.workflowStatus);
-
-		this.broadcast(this.getStateMessage());
+		await this.ctx.storage.put(`step_${stepName}`, status);
+		this.broadcast({
+			type: "step_updated",
+			step: stepName,
+			status,
+			timestamp: Date.now(),
+		});
 	}
 
 	/**
 	 * WebSocket message handler (hibernation API)
-	 * Called when a client sends a message
 	 */
-	async webSocketMessage(ws: WebSocket, _message: string): Promise<void> {
-		ws.send(JSON.stringify(this.getStateMessage()));
+	async webSocketMessage(
+		ws: WebSocket,
+		message: string | ArrayBuffer,
+	): Promise<void> {
+		try {
+			if (typeof message === "string") {
+				const parsed = JSON.parse(message);
+				if (parsed.type === "get_state" || parsed.type === "ping") {
+					const state =
+						this.cachedState ??
+						(await this.ctx.storage.get<MeralOfficeState>("office_state")) ??
+						null;
+					ws.send(
+						JSON.stringify({
+							type: "state_synced",
+							data: state,
+							timestamp: Date.now(),
+						}),
+					);
+				}
+			}
+		} catch {
+			// Ignore malformed client messages
+		}
 	}
 
 	/**
 	 * WebSocket close handler (hibernation API)
-	 * Called when a client closes the connection
 	 */
 	async webSocketClose(
 		ws: WebSocket,
@@ -115,7 +195,7 @@ export class WorkflowStatusDO extends DurableObject {
 	}
 
 	/**
-	 * Broadcast a message to all connected WebSocket clients
+	 * Broadcast message to all active WebSocket connections
 	 */
 	private broadcast(message: object): void {
 		const sockets = this.ctx.getWebSockets();
@@ -125,21 +205,22 @@ export class WorkflowStatusDO extends DurableObject {
 			try {
 				socket.send(json);
 			} catch {
-				// Ignore errors for disconnected sockets
+				// Socket might be disconnected or erroring
 			}
 		}
 	}
 
 	/**
-	 * Get the current state as a message object
+	 * Validate and sanitize office state payload
 	 */
-	private getStateMessage(): object {
+	private sanitizeState(body: Partial<MeralOfficeState>): MeralOfficeState {
 		return {
-			type: "workflow_update",
-			currentStep: this.currentStep,
-			stepStatuses: Object.fromEntries(this.stepStatuses),
-			workflowStatus: this.workflowStatus,
-			timestamp: Date.now(),
+			companies: Array.isArray(body.companies) ? body.companies : [],
+			tasks: Array.isArray(body.tasks) ? body.tasks : [],
+			documents: Array.isArray(body.documents) ? body.documents : [],
+			notes: Array.isArray(body.notes) ? body.notes : [],
+			chatMessages: Array.isArray(body.chatMessages) ? body.chatMessages : [],
+			updatedAt: body.updatedAt || Date.now(),
 		};
 	}
 }
