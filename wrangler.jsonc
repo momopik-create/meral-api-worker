@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "meral-api-worker",
+	"name": "meral-bot-api",
 	"main": "worker/index.ts",
 	"compatibility_date": "2025-10-08",
 	"assets": {
