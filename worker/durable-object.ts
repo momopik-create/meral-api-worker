@@ -10,14 +10,27 @@ export interface MeralOfficeState {
 	notes: unknown[];
 	chatMessages: unknown[];
 	updatedAt: number | string;
+	[key: string]: unknown; // Allow extensible fields from frontend without dropping data
 }
+
+/**
+ * Default empty state if not initialized yet
+ */
+export const DEFAULT_OFFICE_STATE: MeralOfficeState = {
+	companies: [],
+	tasks: [],
+	documents: [],
+	notes: [],
+	chatMessages: [],
+	updatedAt: 0,
+};
 
 /**
  * WorkflowStatusDO - Production Durable Object for Meral SMMM Pro
  *
  * Responsibilities:
  * - Persist Meral's entire accounting office state under key "office_state"
- * - Provide HTTP endpoints (GET /state, PUT /state) and RPC methods
+ * - Provide HTTP endpoints (GET/PUT/POST /state) and RPC methods
  * - Manage real-time WebSocket synchronization across PC & Telegram Mobile devices
  * - Broadcast "state_synced" messages upon state changes
  */
@@ -40,6 +53,7 @@ export class WorkflowStatusDO extends DurableObject {
 	 */
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
+		const pathname = url.pathname.replace(/\/+$/, ""); // normalize trailing slash
 
 		// 1. WebSocket Upgrade for Real-Time Sync
 		if (request.headers.get("Upgrade") === "websocket") {
@@ -53,7 +67,7 @@ export class WorkflowStatusDO extends DurableObject {
 			const currentState =
 				this.cachedState ??
 				(await this.ctx.storage.get<MeralOfficeState>("office_state")) ??
-				null;
+				DEFAULT_OFFICE_STATE;
 
 			server.send(
 				JSON.stringify({
@@ -66,8 +80,13 @@ export class WorkflowStatusDO extends DurableObject {
 			return new Response(null, { status: 101, webSocket: client });
 		}
 
-		// 2. HTTP Route: /state
-		if (url.pathname.endsWith("/state")) {
+		// 2. HTTP Routes: /state, /api/state, /sync, etc.
+		if (
+			pathname.endsWith("/state") ||
+			pathname.endsWith("/sync") ||
+			pathname.endsWith("/office_state") ||
+			pathname === ""
+		) {
 			// GET /state
 			if (request.method === "GET") {
 				const state =
@@ -77,8 +96,12 @@ export class WorkflowStatusDO extends DurableObject {
 				return Response.json(state);
 			}
 
-			// PUT /state
-			if (request.method === "PUT") {
+			// PUT, POST, PATCH /state
+			if (
+				request.method === "PUT" ||
+				request.method === "POST" ||
+				request.method === "PATCH"
+			) {
 				try {
 					const body = (await request.json()) as Partial<MeralOfficeState>;
 					const validatedState = this.sanitizeState(body);
@@ -167,7 +190,7 @@ export class WorkflowStatusDO extends DurableObject {
 					const state =
 						this.cachedState ??
 						(await this.ctx.storage.get<MeralOfficeState>("office_state")) ??
-						null;
+						DEFAULT_OFFICE_STATE;
 					ws.send(
 						JSON.stringify({
 							type: "state_synced",
@@ -212,14 +235,40 @@ export class WorkflowStatusDO extends DurableObject {
 
 	/**
 	 * Validate and sanitize office state payload
+	 * Preserves all extra properties sent from the frontend while ensuring essential arrays exist
 	 */
 	private sanitizeState(body: Partial<MeralOfficeState>): MeralOfficeState {
+		if (!body || typeof body !== "object") {
+			return { ...DEFAULT_OFFICE_STATE, updatedAt: Date.now() };
+		}
+
 		return {
-			companies: Array.isArray(body.companies) ? body.companies : [],
-			tasks: Array.isArray(body.tasks) ? body.tasks : [],
-			documents: Array.isArray(body.documents) ? body.documents : [],
-			notes: Array.isArray(body.notes) ? body.notes : [],
-			chatMessages: Array.isArray(body.chatMessages) ? body.chatMessages : [],
+			...body,
+			companies: Array.isArray(body.companies)
+				? body.companies
+				: body.companies
+					? [body.companies]
+					: [],
+			tasks: Array.isArray(body.tasks)
+				? body.tasks
+				: body.tasks
+					? [body.tasks]
+					: [],
+			documents: Array.isArray(body.documents)
+				? body.documents
+				: body.documents
+					? [body.documents]
+					: [],
+			notes: Array.isArray(body.notes)
+				? body.notes
+				: body.notes
+					? [body.notes]
+					: [],
+			chatMessages: Array.isArray(body.chatMessages)
+				? body.chatMessages
+				: body.chatMessages
+					? [body.chatMessages]
+					: [],
 			updatedAt: body.updatedAt || Date.now(),
 		};
 	}
