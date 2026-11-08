@@ -15,13 +15,9 @@
 		"enabled": true
 	},
 	/**
-	 * Environment Variables (مادام‌العمر و پایدار در هر بیلد)
-	 */
-	"vars": {
-		"MERAL_AUTH_TOKEN": "msmmm_sec_c58e2845a8a1a1d88f865a1a"
-	},
-	/**
 	 * Workflows
+	 * Define Workflows to orchestrate multi-step processes
+	 * https://developers.cloudflare.com/workflows/
 	 */
 	"workflows": [
 		{
@@ -31,7 +27,9 @@
 		}
 	],
 	/**
-	 * Durable Objects (دیتابیس دفاتر مرال)
+	 * Durable Objects
+	 * Used for WebSocket state management and real-time updates
+	 * https://developers.cloudflare.com/durable-objects/
 	 */
 	"durable_objects": {
 		"bindings": [
@@ -43,6 +41,7 @@
 	},
 	/**
 	 * Migrations
+	 * Required for Durable Objects
 	 */
 	"migrations": [
 		{
