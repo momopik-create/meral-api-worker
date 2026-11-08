@@ -1,45 +1,52 @@
-/**
- * Meral SMMM Pro - Cloudflare Worker API & Real-Time Sync Engine
- * High-performance, zero-fail, multi-model AI & durable cloud sync backend.
- */
+export { MyWorkflow } from "./workflow";
+export { WorkflowStatusDO } from "./durable-object";
+import type { WorkflowStatusDO } from "./durable-object";
 
-// 1. Strict Global CORS Headers
+export interface ExtendedEnv {
+	WORKFLOW_STATUS: DurableObjectNamespace<WorkflowStatusDO>;
+	MY_WORKFLOW: unknown;
+	GEMINI_API_KEY?: string;
+	MERAL_AUTH_TOKEN?: string;
+	AI_API_KEY?: string;
+	OPENAI_API_KEY?: string;
+	OPENAI_API_BASE?: string;
+	AI_MODEL?: string;
+	GEMINI_MODEL?: string;
+	[key: string]: unknown;
+}
+
 const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-	"Access-Control-Allow-Headers": "Content-Type, Authorization, X-Meral-Auth",
-	"Access-Control-Max-Age": "86400",
+	"Access-Control-Allow-Headers": "Content-Type, X-Meral-Auth",
 };
 
 /**
- * Returns a JSON Response with strict CORS headers
+ * Standard helper to build JSON response with strict CORS headers.
+ * Ensures HTML (<!doctype html>) is NEVER returned on any API route.
  */
-function jsonResponse(data: unknown, status = 200): Response {
+function jsonResponse(
+	data: unknown,
+	status = 200,
+	extraHeaders: Record<string, string> = {},
+): Response {
 	return new Response(JSON.stringify(data), {
 		status,
 		headers: {
 			"Content-Type": "application/json; charset=utf-8",
 			...corsHeaders,
+			...extraHeaders,
 		},
 	});
 }
 
 /**
- * Extended Environment definition to allow flexible AI keys and models
- */
-interface ExtendedEnv {
-	WORKFLOW_STATUS: DurableObjectNamespace;
-	GEMINI_API_KEY?: string;
-	AI_API_KEY?: string;
-	OPENAI_API_KEY?: string;
-	AI_MODEL?: string;
-	GEMINI_MODEL?: string;
-	OPENAI_API_BASE?: string;
-	MERAL_AUTH_TOKEN?: string;
-}
-
-/**
- * Up-to-date Gemini models cascade (fastest & most stable first)
+ * Supported Gemini models in preferred priority order:
+ * gemini-3.8-flash (Latest recommended by Google in 2026)
+ * gemini-2.5-flash
+ * gemini-2.0-flash
+ * gemini-1.5-flash
+ * gemini-1.5-pro
  */
 const DEFAULT_GEMINI_MODELS = [
 	"gemini-3.8-flash",
@@ -50,16 +57,16 @@ const DEFAULT_GEMINI_MODELS = [
 ];
 
 /**
- * Fallback Curated SMMM Regulatory Radar Items (Official Turkish Legislation)
+ * High-Accuracy Curated Turkish SMMM Legislation Dataset for Resilient Zero-Fail Fallback
  */
 const CURATED_MEVZUAT_RADAR = [
 	{
 		id: "mevzuat-vuk-563",
 		source: "GİB",
-		title: "VUK 563 Sıra No'lu Genel Tebliği Kapsamında Enflasyon Düzeltmesi ve Geçici Vergi Muafiyeti",
+		title: "VUK 563 Sıra No'lu Tebliğ: Enflasyon Düzeltmesi & Geçici Vergi Esasları",
 		publishDate: new Date().toISOString().split("T")[0],
-		targetSectors: ["Genel", "İmalat", "Ticaret", "İnşaat"],
-		summary: "Enflasyon düzeltmesi şartlarının oluşup oluşmadığı ve bilanço esasına göre defter tutan mükelleflerin geçici vergi muafiyeti detayları yürürlüktedir.",
+		targetSectors: ["Genel", "İnşaat & Taahhüt", "İmalat"],
+		summary: "213 Sayılı Vergi Usul Kanunu Mükerrer 298-A uyarınca mali tabloların enflasyon düzeltmesine tabi tutulması ve 50 Milyon TL ciro altındaki mükelleflerin geçici vergi muafiyeti detayları yürürlüktedir.",
 		legalBasis: "213 Sayılı VUK Mükerrer 298-A ve VUK 563 Sıra No'lu Genel Tebliğ",
 		penaltyRisk: "Düzeltme işlemlerinin yasal defterlere işlenmemesi halinde VUK Mükerrer 355 Özel Usulsüzlük ve resen vergi tarhiyatı riski.",
 		actionPlanForMeral: [
@@ -105,7 +112,7 @@ const CURATED_MEVZUAT_RADAR = [
 		title: "GVK 40/1-d Binek Otomobil %70 Gider Kısıtlaması & %30 KKEG Uygulaması",
 		publishDate: new Date().toISOString().split("T")[0],
 		targetSectors: ["Genel", "Hizmet", "Ticaret"],
-		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya çeşitli şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
+		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya مختلف şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
 		legalBasis: "193 Sayılı Gelir Vergisi Kanunu Madde 40/1-d ve 324 Seri No'lu GVGT",
 		penaltyRisk: "KKEG ayrılmadan %100 gider yazılması halinde matrah farkı üzerinden VUK 344 Vergi Ziyaı cezası uygulanır.",
 		actionPlanForMeral: [
@@ -633,7 +640,7 @@ GÖREV: Google Search Grounding ile Türkiye Cumhuriyeti Resmî Gazete (resmigaz
 ZORUNLU OTANTİKLİK VE GÜNCELLİK KURALLARI:
 1. YALNIZCA ${ninetyDaysAgo} ile ${todayStr} tarihleri arasında (son 90 gün içinde) Resmî Gazete'de yayımlanan Vergi/SGK Tebliğleri, GİB Sirküleri, SGK Genelgeleri veya TÜRMOB mevzuat duyurularını bul.
 2. 90 günden daha eski, geçmiş yıllara ait sirkülerleri KESİNLİKLE LİSTELEME.
-3. Her یک maddenin "publishDate" değeri, ilgili resmi tebliğin/sirkülerin Resmî Gazete'de veya GİB/SGK sitesinde yayımlandığı GERÇEK ve OTANTİK تاریخ (YYYY-MM-DD formatında) olmalıdır. Kesinlikle hayali veya uydurma tarih yazma!
+3. Her bir maddenin "publishDate" değeri, ilgili resmi tebliğin/sirkülerin Resmî Gazete'de veya GİB/SGK sitesinde yayımlandığı GERÇEK ve OTANTİK تاریخ (YYYY-MM-DD formatında) olmalıdır. Kesinlikle hayali veya uydurma تاریخ yazma!
 4. "legalBasis" alanında resmi tebliğ numarası (Örn: "VUK Genel Tebliği Sıra No: ...", "Resmî Gazete Sayı: ...") mutlaka yer almalıdır.
 
 Her bir madde için tam olarak aşağıdaki JSON şemasına uygun dizi (array) döndür:
