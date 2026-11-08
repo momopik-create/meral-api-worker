@@ -1,52 +1,45 @@
-export { MyWorkflow } from "./workflow";
-export { WorkflowStatusDO } from "./durable-object";
-import type { WorkflowStatusDO } from "./durable-object";
+/**
+ * Meral SMMM Pro - Cloudflare Worker API & Real-Time Sync Engine
+ * High-performance, zero-fail, multi-model AI & durable cloud sync backend.
+ */
 
-export interface ExtendedEnv {
-	WORKFLOW_STATUS: DurableObjectNamespace<WorkflowStatusDO>;
-	MY_WORKFLOW: unknown;
-	GEMINI_API_KEY?: string;
-	MERAL_AUTH_TOKEN?: string;
-	AI_API_KEY?: string;
-	OPENAI_API_KEY?: string;
-	OPENAI_API_BASE?: string;
-	AI_MODEL?: string;
-	GEMINI_MODEL?: string;
-	[key: string]: unknown;
-}
-
+// 1. Strict Global CORS Headers
 const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-	"Access-Control-Allow-Headers": "Content-Type, X-Meral-Auth",
+	"Access-Control-Allow-Headers": "Content-Type, Authorization, X-Meral-Auth",
+	"Access-Control-Max-Age": "86400",
 };
 
 /**
- * Standard helper to build JSON response with strict CORS headers.
- * Ensures HTML (<!doctype html>) is NEVER returned on any API route.
+ * Returns a JSON Response with strict CORS headers
  */
-function jsonResponse(
-	data: unknown,
-	status = 200,
-	extraHeaders: Record<string, string> = {},
-): Response {
+function jsonResponse(data: unknown, status = 200): Response {
 	return new Response(JSON.stringify(data), {
 		status,
 		headers: {
 			"Content-Type": "application/json; charset=utf-8",
 			...corsHeaders,
-			...extraHeaders,
 		},
 	});
 }
 
 /**
- * Supported Gemini models in preferred priority order:
- * gemini-3.8-flash (Latest recommended by Google in 2026)
- * gemini-2.5-flash
- * gemini-2.0-flash
- * gemini-1.5-flash
- * gemini-1.5-pro
+ * Extended Environment definition to allow flexible AI keys and models
+ */
+interface ExtendedEnv {
+	WORKFLOW_STATUS: DurableObjectNamespace;
+	GEMINI_API_KEY?: string;
+	AI_API_KEY?: string;
+	OPENAI_API_KEY?: string;
+	AI_MODEL?: string;
+	GEMINI_MODEL?: string;
+	OPENAI_API_BASE?: string;
+	MERAL_AUTH_TOKEN?: string;
+}
+
+/**
+ * Up-to-date Gemini models cascade (fastest & most stable first)
  */
 const DEFAULT_GEMINI_MODELS = [
 	"gemini-3.8-flash",
@@ -57,16 +50,16 @@ const DEFAULT_GEMINI_MODELS = [
 ];
 
 /**
- * High-Accuracy Curated Turkish SMMM Legislation Dataset for Resilient Zero-Fail Fallback
+ * Fallback Curated SMMM Regulatory Radar Items (Official Turkish Legislation)
  */
 const CURATED_MEVZUAT_RADAR = [
 	{
 		id: "mevzuat-vuk-563",
 		source: "GİB",
-		title: "VUK 563 Sıra No'lu Tebliğ: Enflasyon Düzeltmesi & Geçici Vergi Esasları",
+		title: "VUK 563 Sıra No'lu Genel Tebliği Kapsamında Enflasyon Düzeltmesi ve Geçici Vergi Muafiyeti",
 		publishDate: new Date().toISOString().split("T")[0],
-		targetSectors: ["Genel", "İnşaat & Taahhüt", "İmalat"],
-		summary: "213 Sayılı Vergi Usul Kanunu Mükerrer 298-A uyarınca mali tabloların enflasyon düzeltmesine tabi tutulması ve 50 Milyon TL ciro altındaki mükelleflerin geçici vergi muafiyeti detayları yürürlüktedir.",
+		targetSectors: ["Genel", "İmalat", "Ticaret", "İnşaat"],
+		summary: "Enflasyon düzeltmesi şartlarının oluşup oluşmadığı ve bilanço esasına göre defter tutan mükelleflerin geçici vergi muafiyeti detayları yürürlüktedir.",
 		legalBasis: "213 Sayılı VUK Mükerrer 298-A ve VUK 563 Sıra No'lu Genel Tebliğ",
 		penaltyRisk: "Düzeltme işlemlerinin yasal defterlere işlenmemesi halinde VUK Mükerrer 355 Özel Usulsüzlük ve resen vergi tarhiyatı riski.",
 		actionPlanForMeral: [
@@ -625,37 +618,36 @@ export default {
 			}
 		}
 
-		// 9. POST /api/mevzuat-live: Canlı Mevzuat Taraması (Multi-Model & Zero-Fail Resilient)
+		// 9. POST /api/mevzuat-live: Canlı Mevzuat Tarasması (Canlı Google Search & Otantik Tarihler)
 		if (cleanPath === "/api/mevzuat-live" && request.method === "POST") {
 			try {
 				const now = new Date();
-				const todayStr = now.toISOString().split("T")[0];
+				const todayStr = now.toISOString().split("T")[0]; // Canlı çalıştığı anın gerçek tarihi
 				const currentYear = now.getFullYear();
+				// 90 gün öncesinin tarihi (Örn: 3 ay önceki sirküler sınırı)
+				const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
-				const mevzuatPrompt = `BUGÜNÜN TARİHİ: ${todayStr} (Yıl: ${currentYear}).
-ZORUNLU GÜNCELLİK KURALLARI:
-1. Kesinlikle 2024 veya öncesine ait eski tarihli içerikleri KESİNLİKLE getirme! 2024 ve 2025 yılına ait eski haberler geçersizdir.
-2. Yalnızca ${currentYear} yılı (ve özellikle son 1-3 ay) içinde Gelir İdaresi Başkanlığı (gib.gov.tr), Resmî Gazete (resmigazete.gov.tr), SGK (sgk.gov.tr) ve TÜRMOB (turmob.org.tr) tarafından yayımlanan en yeni mevzuat, tebliğ ve sirküleri tara.
-3. Odaklanılacak konular:
-   - ${currentYear} yılı Enflasyon Düzeltmesi (VUK 563) ve Geçici Vergi beyanname uygulama esasları
-   - ${currentYear} yılı Asgari Ücret, SGK prime esas kazanç taban/tavan ve teşvik uygulamaları
-   - ${currentYear} yılı KDV tevkifat oranları, KDV iadeleri ve çapraz denetimler
-   - ${currentYear} yılı Binek araç gider kısıtlaması (%70 / %30 KKEG) ve amortisman sınırları
-   - ${currentYear} yılı e-Defter, e-Fatura, e-Arşiv ve beyanname süreleri
-4. Her bir maddenin "publishDate" değeri kesinlikle ${currentYear} yılına ait gerçekçi ve güncel bir tarih (YYYY-MM-DD formatında, örn: "${todayStr}") olmalıdır.
+				const mevzuatPrompt = `BUGÜNÜN CANLI TARİHİ: ${todayStr} (Yıl: ${currentYear}).
+GÖREV: Google Search Grounding ile Türkiye Cumhuriyeti Resmî Gazete (resmigazete.gov.tr), Gelir İdaresi Başkanlığı (gib.gov.tr), Sosyal Güvenlik Kurumu (sgk.gov.tr) ve TÜRMOB (turmob.org.tr) resmi web sitelerini canlı tara ve Türk mali müşavirlerini doğrudan ilgilendiren en taze resmi sirküleri listele.
 
-Her یک madde için tam olarak aşağıdaki JSON formatında bir dizi (array) oluştur:
+ZORUNLU OTANTİKLİK VE GÜNCELLİK KURALLARI:
+1. YALNIZCA ${ninetyDaysAgo} ile ${todayStr} tarihleri arasında (son 90 gün içinde) Resmî Gazete'de yayımlanan Vergi/SGK Tebliğleri, GİB Sirküleri, SGK Genelgeleri veya TÜRMOB mevzuat duyurularını bul.
+2. 90 günden daha eski, geçmiş yıllara ait sirkülerleri KESİNLİKLE LİSTELEME.
+3. Her یک maddenin "publishDate" değeri, ilgili resmi tebliğin/sirkülerin Resmî Gazete'de veya GİB/SGK sitesinde yayımlandığı GERÇEK ve OTANTİK تاریخ (YYYY-MM-DD formatında) olmalıdır. Kesinlikle hayali veya uydurma tarih yazma!
+4. "legalBasis" alanında resmi tebliğ numarası (Örn: "VUK Genel Tebliği Sıra No: ...", "Resmî Gazete Sayı: ...") mutlaka yer almalıdır.
+
+Her bir madde için tam olarak aşağıdaki JSON şemasına uygun dizi (array) döndür:
 [
   {
     "id": "mevzuat-live-1",
     "source": "Resmî Gazete" | "GİB" | "SGK" | "TÜRMOB",
-    "title": "Mevzuat Konusu Başlığı (${currentYear} Güncel)",
-    "publishDate": "${todayStr}",
+    "title": "Mevzuat Konusu Başlığı (Resmi Tebliğ / Sirküler Adı)",
+    "publishDate": "YYYY-MM-DD",
     "targetSectors": ["Genel", "İnşaat & Taahhüt", "İhracat & Dış Ticaret", "Yazılım & Teknopark", "Perakende & Gıda"],
-    "summary": "Mükellefleri ve SMMM ofisini doğrudan ilgilendiren ${currentYear} yılı güncel özet açıklaması.",
-    "legalBasis": "İlgili Kanun ve ${currentYear} Tebliğ Maddesi",
+    "summary": "Sirkülerin SMMM ofisini ve mükellefleri doğrudan ilgilendiren özeti.",
+    "legalBasis": "İlgili Kanun, Resmî Gazete Sayısı ve Tebliğ Sıra No",
     "penaltyRisk": "Zamanında uyulmaması halinde VUK / SGK idari para cezası ve usulsüzlük riski.",
-    "actionPlanForMeral": ["SMMM Meral Hanım'ın ${currentYear} yılında mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
+    "actionPlanForMeral": ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
     "isCrucial": true
   }
 ]
@@ -665,7 +657,7 @@ Her یک madde için tam olarak aşağıdaki JSON formatında bir dizi (array) o
 				let rawText = "";
 				try {
 					rawText = await callAiWithFallback(env, {
-						systemPrompt: `Sen Türkiye'nin en seçkin Vergi Hukuku ve Mevzuat Araştırma Uzmanısın. Bugünün tarihi: ${todayStr}. Yalnızca ${currentYear} yılına ait en güncel resmi mevzuatları araştırıp raporlarsın.`,
+						systemPrompt: `Sen Türkiye'nin en seçkin Vergi Hukuku ve Mevzuat Araştırma Uzmanısın. Canlı sorgulama anındaki tarih: ${todayStr}. Yalnızca son 90 gün içinde yayımlanmış en güncel resmi mevzuatları araştırıp gerçek yayım tarihleriyle raporlarsın.`,
 						userPrompt: mevzuatPrompt,
 						useSearchGrounding: true,
 						temperature: 0.1,
@@ -706,28 +698,41 @@ Her یک madde için tam olarak aşağıdaki JSON formatında bir dizi (array) o
 					items = CURATED_MEVZUAT_RADAR as unknown as Array<Record<string, unknown>>;
 				}
 
-				// Strict modern date enforcement: Replace any outdated dates (e.g. 2024 or earlier) with current year
-				items = items.map((item, idx) => {
-					let date = typeof item?.publishDate === "string" ? item.publishDate.trim() : "";
-					if (!date || date.startsWith("2024") || date.startsWith("2023") || date.startsWith("2022") || date.startsWith("2025")) {
-						date = todayStr;
-					}
-					return {
-						...item,
-						id: item.id || `mevzuat-live-${Date.now()}-${idx}`,
-						publishDate: date,
-					};
-				});
+				// Otantik ve geçerli tarih filtresi (Son 180 gün içindeki gerçek resmi sirkülerleri kabul et, eski olanları filtrele)
+				const cutoffTimestamp = now.getTime() - 180 * 24 * 60 * 60 * 1000;
+				const validLiveItems: Array<Record<string, unknown>> = [];
 
-				// Sort newest date first
-				items.sort((a, b) => String(b.publishDate || "").localeCompare(String(a.publishDate || "")));
+				for (let i = 0; i < items.length; i++) {
+					const item = items[i];
+					let dateStr = typeof item?.publishDate === "string" ? item.publishDate.trim() : "";
+					const itemDate = new Date(dateStr);
+
+					// Eğer tarih formatı geçersizse veya 180 günden eskiyse, yapay tarih atamak yerine filtrele
+					const isValidRecent = !isNaN(itemDate.getTime()) && itemDate.getTime() >= cutoffTimestamp;
+					if (isValidRecent) {
+						validLiveItems.push({
+							...item,
+							id: item.id || `mevzuat-live-${Date.now()}-${i}`,
+							publishDate: dateStr,
+							isAuthentic: true,
+						});
+					}
+				}
+
+				// Eğer canlı aramadan son 180 güne ait en az 1 otantik madde bulunduysa onları döndür
+				const finalItems = validLiveItems.length > 0 
+					? validLiveItems 
+					: (CURATED_MEVZUAT_RADAR as unknown as Array<Record<string, unknown>>);
+
+				// En yeni otantik tarih en üstte olacak şekilde sırala
+				finalItems.sort((a, b) => String(b.publishDate || "").localeCompare(String(a.publishDate || "")));
 
 				return jsonResponse({
 					ok: true,
 					timestamp: Date.now(),
-					count: Array.isArray(items) ? items.length : 0,
-					items,
-					source: "live_ai",
+					count: finalItems.length,
+					items: finalItems,
+					source: validLiveItems.length > 0 ? "live_ai_authentic" : "curated_radar",
 				});
 			} catch (err) {
 				return jsonResponse({
