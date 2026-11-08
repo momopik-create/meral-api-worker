@@ -1,5 +1,19 @@
 export { MyWorkflow } from "./workflow";
 export { WorkflowStatusDO } from "./durable-object";
+import type { WorkflowStatusDO } from "./durable-object";
+
+export interface ExtendedEnv {
+	WORKFLOW_STATUS: DurableObjectNamespace<WorkflowStatusDO>;
+	MY_WORKFLOW: unknown;
+	GEMINI_API_KEY?: string;
+	MERAL_AUTH_TOKEN?: string;
+	AI_API_KEY?: string;
+	OPENAI_API_KEY?: string;
+	OPENAI_API_BASE?: string;
+	AI_MODEL?: string;
+	GEMINI_MODEL?: string;
+	[key: string]: unknown;
+}
 
 const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Origin": "*",
@@ -98,7 +112,7 @@ const CURATED_MEVZUAT_RADAR = [
 		title: "GVK 40/1-d Binek Otomobil %70 Gider Kısıtlaması & %30 KKEG Uygulaması",
 		publishDate: new Date().toISOString().split("T")[0],
 		targetSectors: ["Genel", "Hizmet", "Ticaret"],
-		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya çeşitli şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
+		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya বিভিন্ন şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
 		legalBasis: "193 Sayılı Gelir Vergisi Kanunu Madde 40/1-d ve 324 Seri No'lu GVGT",
 		penaltyRisk: "KKEG ayrılmadan %100 gider yazılması halinde matrah farkı üzerinden VUK 344 Vergi Ziyaı cezası uygulanır.",
 		actionPlanForMeral: [
@@ -186,10 +200,11 @@ async function callAiWithFallback(
 		responseMimeType?: string;
 	},
 ): Promise<string> {
+	const extEnv = env as unknown as ExtendedEnv;
 	const apiKey =
-		env.GEMINI_API_KEY ||
-		(env as Record<string, unknown>).AI_API_KEY as string | undefined ||
-		(env as Record<string, unknown>).OPENAI_API_KEY as string | undefined;
+		extEnv.GEMINI_API_KEY ||
+		extEnv.AI_API_KEY ||
+		extEnv.OPENAI_API_KEY;
 
 	if (!apiKey) {
 		throw new Error("API Anahtarı (GEMINI_API_KEY) tanımlanmamış.");
@@ -197,13 +212,13 @@ async function callAiWithFallback(
 
 	const isExplicitOpenAi =
 		apiKey.startsWith("sk-") ||
-		Boolean((env as Record<string, unknown>).OPENAI_API_BASE);
+		Boolean(extEnv.OPENAI_API_BASE);
 
 	// 1. OpenAI-Compatible Branch
 	if (isExplicitOpenAi) {
-		const rawBase = (env as Record<string, unknown>).OPENAI_API_BASE as string | undefined;
+		const rawBase = extEnv.OPENAI_API_BASE;
 		const baseUrl = rawBase ? rawBase.replace(/\/+$/, "") : "https://api.openai.com/v1";
-		const model = ((env as Record<string, unknown>).AI_MODEL as string | undefined) || "gpt-4o-mini";
+		const model = extEnv.AI_MODEL || "gpt-4o-mini";
 
 		const messages: Array<{ role: string; content: unknown }> = [
 			{ role: "system", content: options.systemPrompt },
@@ -256,9 +271,7 @@ async function callAiWithFallback(
 	}
 
 	// 2. Google Gemini Branch with Multi-Model Cascade
-	const preferredModel =
-		((env as Record<string, unknown>).AI_MODEL as string | undefined) ||
-		((env as Record<string, unknown>).GEMINI_MODEL as string | undefined);
+	const preferredModel = extEnv.AI_MODEL || extEnv.GEMINI_MODEL;
 
 	const modelsToTry = preferredModel
 		? [preferredModel, ...DEFAULT_GEMINI_MODELS.filter((m) => m !== preferredModel)]
@@ -376,6 +389,8 @@ function extractAuthToken(request: Request, url: URL): string | null {
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
+		const extEnv = env as unknown as ExtendedEnv;
+
 		// 1. Immediately intercept OPTIONS preflight requests at the very top of fetch
 		if (request.method === "OPTIONS") {
 			return new Response(null, {
@@ -397,9 +412,9 @@ export default {
 				ok: true,
 				service: "Meral SMMM Pro Cloud Engine",
 				hasGeminiKey: Boolean(
-					env.GEMINI_API_KEY ||
-					(env as Record<string, unknown>).AI_API_KEY ||
-					(env as Record<string, unknown>).OPENAI_API_KEY,
+					extEnv.GEMINI_API_KEY ||
+					extEnv.AI_API_KEY ||
+					extEnv.OPENAI_API_KEY,
 				),
 				supportedModels: DEFAULT_GEMINI_MODELS,
 				timestamp: Date.now(),
@@ -410,8 +425,8 @@ export default {
 		if (cleanPath === "/ws" || cleanPath === "/api/ws") {
 			if (request.headers.get("Upgrade") === "websocket") {
 				try {
-					const doId = env.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
-					const officeDO = env.WORKFLOW_STATUS.get(doId);
+					const doId = extEnv.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
+					const officeDO = extEnv.WORKFLOW_STATUS.get(doId);
 					return officeDO.fetch(request);
 				} catch (err) {
 					return new Response(
@@ -425,7 +440,7 @@ export default {
 		// 4. Verify X-Meral-Auth header on protected /api/* routes (except /api/health)
 		if (cleanPath.startsWith("/api/") && cleanPath !== "/api/health") {
 			const expectedToken =
-				env.MERAL_AUTH_TOKEN || "msmmm_sec_c58e2845a8a1a1d88f865a1a";
+				(extEnv.MERAL_AUTH_TOKEN as string | undefined) || "msmmm_sec_c58e2845a8a1a1d88f865a1a";
 			const clientToken = extractAuthToken(request, url);
 
 			const isAuthorized =
@@ -446,8 +461,8 @@ export default {
 
 		// 5. GET & PUT /api/state -> Forward to Durable Object
 		if (cleanPath === "/api/state" || cleanPath === "/state") {
-			const doId = env.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
-			const officeDO = env.WORKFLOW_STATUS.get(doId);
+			const doId = extEnv.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
+			const officeDO = extEnv.WORKFLOW_STATUS.get(doId);
 
 			if (request.method === "GET") {
 				const doRes = await officeDO.fetch(
@@ -475,8 +490,8 @@ export default {
 
 		// 6. GET /api/backups -> Forward to Durable Object
 		if (cleanPath === "/api/backups") {
-			const doId = env.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
-			const officeDO = env.WORKFLOW_STATUS.get(doId);
+			const doId = extEnv.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
+			const officeDO = extEnv.WORKFLOW_STATUS.get(doId);
 
 			const doRes = await officeDO.fetch(
 				new Request("https://internal/backups", { method: "GET" }),
