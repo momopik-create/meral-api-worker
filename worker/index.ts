@@ -112,7 +112,7 @@ const CURATED_MEVZUAT_RADAR = [
 		title: "GVK 40/1-d Binek Otomobil %70 Gider Kısıtlaması & %30 KKEG Uygulaması",
 		publishDate: new Date().toISOString().split("T")[0],
 		targetSectors: ["Genel", "Hizmet", "Ticaret"],
-		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya বিভিন্ন şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
+		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya çeşitli şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
 		legalBasis: "193 Sayılı Gelir Vergisi Kanunu Madde 40/1-d ve 324 Seri No'lu GVGT",
 		penaltyRisk: "KKEG ayrılmadan %100 gider yazılması halinde matrah farkı üzerinden VUK 344 Vergi Ziyaı cezası uygulanır.",
 		actionPlanForMeral: [
@@ -628,21 +628,34 @@ export default {
 		// 9. POST /api/mevzuat-live: Canlı Mevzuat Taraması (Multi-Model & Zero-Fail Resilient)
 		if (cleanPath === "/api/mevzuat-live" && request.method === "POST") {
 			try {
-				const mevzuatPrompt = `Türkiye'deki resmi kaynakları (gib.gov.tr, resmigazete.gov.tr, sgk.gov.tr, turmob.org.tr) güncel olarak tara.
-Vergi Usul Kanunu (VUK), KDV Kanunu, SGK bildirimleri, Enflasyon Düzeltmesi, e-Defter ve beyanname süreleri ile ilgili en kritik ve yeni 3 ila 5 mevzuat değişikliğini tespit et.
+				const now = new Date();
+				const todayStr = now.toISOString().split("T")[0];
+				const currentYear = now.getFullYear();
 
-Her bir madde için tam olarak aşağıdaki JSON formatında bir dizi (array) oluştur:
+				const mevzuatPrompt = `BUGÜNÜN TARİHİ: ${todayStr} (Yıl: ${currentYear}).
+ZORUNLU GÜNCELLİK KURALLARI:
+1. Kesinlikle 2024 veya öncesine ait eski tarihli içerikleri KESİNLİKLE getirme! 2024 ve 2025 yılına ait eski haberler geçersizdir.
+2. Yalnızca ${currentYear} yılı (ve özellikle son 1-3 ay) içinde Gelir İdaresi Başkanlığı (gib.gov.tr), Resmî Gazete (resmigazete.gov.tr), SGK (sgk.gov.tr) ve TÜRMOB (turmob.org.tr) tarafından yayımlanan en yeni mevzuat, tebliğ ve sirküleri tara.
+3. Odaklanılacak konular:
+   - ${currentYear} yılı Enflasyon Düzeltmesi (VUK 563) ve Geçici Vergi beyanname uygulama esasları
+   - ${currentYear} yılı Asgari Ücret, SGK prime esas kazanç taban/tavan ve teşvik uygulamaları
+   - ${currentYear} yılı KDV tevkifat oranları, KDV iadeleri ve çapraz denetimler
+   - ${currentYear} yılı Binek araç gider kısıtlaması (%70 / %30 KKEG) ve amortisman sınırları
+   - ${currentYear} yılı e-Defter, e-Fatura, e-Arşiv ve beyanname süreleri
+4. Her bir maddenin "publishDate" değeri kesinlikle ${currentYear} yılına ait gerçekçi ve güncel bir tarih (YYYY-MM-DD formatında, örn: "${todayStr}") olmalıdır.
+
+Her یک madde için tam olarak aşağıdaki JSON formatında bir dizi (array) oluştur:
 [
   {
     "id": "mevzuat-live-1",
     "source": "Resmî Gazete" | "GİB" | "SGK" | "TÜRMOB",
-    "title": "Mevzuat Konusu Başlığı",
-    "publishDate": "YYYY-MM-DD",
+    "title": "Mevzuat Konusu Başlığı (${currentYear} Güncel)",
+    "publishDate": "${todayStr}",
     "targetSectors": ["Genel", "İnşaat & Taahhüt", "İhracat & Dış Ticaret", "Yazılım & Teknopark", "Perakende & Gıda"],
-    "summary": "Mükellefleri ve SMMM ofisini doğrudan ilgilendiren özet açıklama.",
-    "legalBasis": "İlgili Kanun ve Tebliğ Maddesi (Örn: 213 Sayılı VUK Mükerrer 298-A)",
+    "summary": "Mükellefleri ve SMMM ofisini doğrudan ilgilendiren ${currentYear} yılı güncel özet açıklaması.",
+    "legalBasis": "İlgili Kanun ve ${currentYear} Tebliğ Maddesi",
     "penaltyRisk": "Zamanında uyulmaması halinde VUK / SGK idari para cezası ve usulsüzlük riski.",
-    "actionPlanForMeral": ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
+    "actionPlanForMeral": ["SMMM Meral Hanım'ın ${currentYear} yılında mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
     "isCrucial": true
   }
 ]
@@ -652,7 +665,7 @@ Her bir madde için tam olarak aşağıdaki JSON formatında bir dizi (array) ol
 				let rawText = "";
 				try {
 					rawText = await callAiWithFallback(env, {
-						systemPrompt: "Sen Türk Vergi Hukuku ve Mevzuat Araştırma Uzmanısın.",
+						systemPrompt: `Sen Türkiye'nin en seçkin Vergi Hukuku ve Mevzuat Araştırma Uzmanısın. Bugünün tarihi: ${todayStr}. Yalnızca ${currentYear} yılına ait en güncel resmi mevzuatları araştırıp raporlarsın.`,
 						userPrompt: mevzuatPrompt,
 						useSearchGrounding: true,
 						temperature: 0.1,
@@ -681,15 +694,33 @@ Her bir madde için tam olarak aşağıdaki JSON formatında bir dizi (array) ol
 					cleaned = cleaned.substring(firstBracket, lastBracket + 1);
 				}
 
-				let items: unknown[];
+				let items: Array<Record<string, unknown>>;
 				try {
-					items = JSON.parse(cleaned);
-					if (!Array.isArray(items) || items.length === 0) {
-						items = CURATED_MEVZUAT_RADAR;
+					const parsed = JSON.parse(cleaned);
+					if (Array.isArray(parsed) && parsed.length > 0) {
+						items = parsed as Array<Record<string, unknown>>;
+					} else {
+						items = CURATED_MEVZUAT_RADAR as unknown as Array<Record<string, unknown>>;
 					}
 				} catch {
-					items = CURATED_MEVZUAT_RADAR;
+					items = CURATED_MEVZUAT_RADAR as unknown as Array<Record<string, unknown>>;
 				}
+
+				// Strict modern date enforcement: Replace any outdated dates (e.g. 2024 or earlier) with current year
+				items = items.map((item, idx) => {
+					let date = typeof item?.publishDate === "string" ? item.publishDate.trim() : "";
+					if (!date || date.startsWith("2024") || date.startsWith("2023") || date.startsWith("2022") || date.startsWith("2025")) {
+						date = todayStr;
+					}
+					return {
+						...item,
+						id: item.id || `mevzuat-live-${Date.now()}-${idx}`,
+						publishDate: date,
+					};
+				});
+
+				// Sort newest date first
+				items.sort((a, b) => String(b.publishDate || "").localeCompare(String(a.publishDate || "")));
 
 				return jsonResponse({
 					ok: true,
