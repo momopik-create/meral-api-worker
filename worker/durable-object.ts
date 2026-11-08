@@ -33,7 +33,6 @@ export const DEFAULT_OFFICE_STATE: MeralOfficeState = {
  * - Return { initialized: false } when empty so clients know to initialize
  * - Expose GET /backups to inspect historical office state snapshots
  * - WebSocket broadcast for multi-device synchronization (PC & Mobile Telegram)
- * - Provide updateStep RPC method for workflow compatibility
  */
 export class WorkflowStatusDO extends DurableObject {
 	private cachedState: MeralOfficeState | null = null;
