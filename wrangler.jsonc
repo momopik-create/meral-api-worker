@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "meral-bot-api",
+	"name": "meral-api-worker",
 	"main": "worker/index.ts",
 	"compatibility_date": "2025-10-08",
 	"assets": {
@@ -15,9 +15,13 @@
 		"enabled": true
 	},
 	/**
+	 * Environment Variables (مادام‌العمر و پایدار در هر بیلد)
+	 */
+	"vars": {
+		"MERAL_AUTH_TOKEN": "msmmm_sec_c58e2845a8a1a1d88f865a1a"
+	},
+	/**
 	 * Workflows
-	 * Define Workflows to orchestrate multi-step processes
-	 * https://developers.cloudflare.com/workflows/
 	 */
 	"workflows": [
 		{
@@ -27,9 +31,7 @@
 		}
 	],
 	/**
-	 * Durable Objects
-	 * Used for WebSocket state management and real-time updates
-	 * https://developers.cloudflare.com/durable-objects/
+	 * Durable Objects (دیتابیس دفاتر مرال)
 	 */
 	"durable_objects": {
 		"bindings": [
@@ -41,7 +43,6 @@
 	},
 	/**
 	 * Migrations
-	 * Required for Durable Objects
 	 */
 	"migrations": [
 		{
