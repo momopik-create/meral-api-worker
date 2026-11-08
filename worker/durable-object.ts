@@ -33,6 +33,7 @@ export const DEFAULT_OFFICE_STATE: MeralOfficeState = {
  * - Return { initialized: false } when empty so clients know to initialize
  * - Expose GET /backups to inspect historical office state snapshots
  * - WebSocket broadcast for multi-device synchronization (PC & Mobile Telegram)
+ * - Provide updateStep RPC method for workflow compatibility
  */
 export class WorkflowStatusDO extends DurableObject {
 	private cachedState: MeralOfficeState | null = null;
@@ -200,6 +201,19 @@ export class WorkflowStatusDO extends DurableObject {
 		});
 
 		return validatedState;
+	}
+
+	/**
+	 * RPC Method: Update Workflow Step (called by MyWorkflow in workflow.ts)
+	 */
+	async updateStep(stepName: string, status: string): Promise<void> {
+		await this.ctx.storage.put(`step_${stepName}`, status);
+		this.broadcast({
+			type: "step_updated",
+			step: stepName,
+			status,
+			timestamp: Date.now(),
+		});
 	}
 
 	/**
