@@ -34,7 +34,7 @@ Görüntüdeki veya belgedeki faturayı, serbest meslek makbuzunu (SMM), peraken
 
 SIFIR HALÜSİNASYON KURALI:
 1. Yalnızca belgede açıkça görünen gerçek verileri çıkar.
-2. Belgede bulunmayan veya okunamayan string alanlar için null, sayısal alanlar için 0 (veya net değilse null) döndür. Asla veri uydurma!
+2. Belgede bulunmayan veya okunamayan string alanlar برای null, sayısal alanlar için 0 (veya net değilse null) döndür. Asla veri uydurma!
 3. Okunamayan veya şüpheli kısımları "unreadableFields" dizisine ekle.
 
 Döndürülecek JSON Şeması:
@@ -462,12 +462,14 @@ Her bir madde için tam olarak aşağıdaki JSON formatında bir dizi (array) ol
 				const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 				let cleaned = rawText.trim();
 
+				// Strip markdown code fences if present
 				if (cleaned.startsWith("```json")) {
 					cleaned = cleaned.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
 				} else if (cleaned.startsWith("```")) {
 					cleaned = cleaned.replace(/^```\s*/, "").replace(/```$/, "").trim();
 				}
 
+				// Find JSON array bounds
 				const firstBracket = cleaned.indexOf("[");
 				const lastBracket = cleaned.lastIndexOf("]");
 				if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
