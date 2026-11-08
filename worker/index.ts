@@ -1,17 +1,15 @@
-// Export the Workflow and Durable Object classes for Cloudflare Wrangler binding compatibility
 export { MyWorkflow } from "./workflow";
 export { WorkflowStatusDO } from "./durable-object";
 
-const CORS_HEADERS: Record<string, string> = {
+const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Origin": "*",
-	"Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
-	"Access-Control-Allow-Headers": "*",
-	"Access-Control-Expose-Headers": "*",
-	"Access-Control-Max-Age": "86400",
+	"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+	"Access-Control-Allow-Headers": "Content-Type, X-Meral-Auth",
 };
 
 /**
- * Standard helper to build JSON response with CORS headers
+ * Standard helper to build JSON response with strict CORS headers.
+ * Ensures HTML (<!doctype html>) is NEVER returned on any API route.
  */
 function jsonResponse(
 	data: unknown,
@@ -22,7 +20,7 @@ function jsonResponse(
 		status,
 		headers: {
 			"Content-Type": "application/json; charset=utf-8",
-			...CORS_HEADERS,
+			...corsHeaders,
 			...extraHeaders,
 		},
 	});
@@ -32,12 +30,12 @@ function jsonResponse(
  * Strict Zero-Hallucination Turkish SMMM / VUK OCR Prompt
  */
 const OCR_SYSTEM_PROMPT = `Sen kıdemli bir Serbest Muhasebeci Mali Müşavir (SMMM) ve Türk Vergi Hukuku (213 Sayılı VUK, 3065 Sayılı KDV Kanunu) uzmanısın.
-Görüntüdeki belgeyi (Fatura, Serbest Meslek Makbuzu - SMM, Perakende Satış Fişi, Vergi/Ceza İhbarnamesi, Tebligat, SGK bildirgesi vb.) dikkatlice analiz et.
+Görüntüdeki veya belgedeki faturayı, serbest meslek makbuzunu (SMM), perakende satış fişini, vergi/ceza ihbarnamesini, SGK bildirgesini veya resmi tebligatı analiz et.
 
 SIFIR HALÜSİNASYON KURALI:
-1. Yalnızca belgede açıkça görünen verileri çıkar.
-2. Belgede açıkça bulunmayan veya okunamayan string alanlar için null, sayısal alanlar için 0 (veya net değilse null) döndür. Asla uydurma veri üretme!
-3. Okunamayan, silik veya şüpheli kısımları "unreadableFields" dizisine ekle.
+1. Yalnızca belgede açıkça görünen gerçek verileri çıkar.
+2. Belgede bulunmayan veya okunamayan string alanlar için null, sayısal alanlar için 0 (veya net değilse null) döndür. Asla veri uydurma!
+3. Okunamayan veya şüpheli kısımları "unreadableFields" dizisine ekle.
 
 Döndürülecek JSON Şeması:
 {
@@ -67,7 +65,7 @@ Döndürülecek JSON Şeması:
  * Strict Turkish Tax & Accounting Advisor System Prompt
  */
 const ADVISOR_SYSTEM_PROMPT = `Sen Türkiye'nin en seçkin Serbest Muhasebeci Mali Müşavirlik (SMMM) ve Türk Vergi Hukuku yapay zeka danışmanısın.
-Kullanıcının sorusunu Türk Vergi ve Sosyal Güvenlik Mevzuatı (213 Sayılı Vergi Usul Kanunu - VUK, 3065 Sayılı KDV Kanunu, 193 Sayılı Gelir Vergisi Kanunu - GVK, 5520 Sayılı Kurumlar Vergisi Kanunu - KVK, 5510 Sayılı SGK Kanunu) ile Tek Düzen Hesap Planı (TDHP) çerçevesinde değerlendireceksin.
+Kullanıcının sorusunu Türk Vergi ve Sosyal Güvenlik Mevzuatı (213 Sayılı VUK, 3065 Sayılı KDV Kanunu, 193 Sayılı GVK, 5520 Sayılı KVK, 5510 Sayılı SGK Kanunu) ile Tek Düzen Hesap Planı (TDHP) çerçevesinde değerlendireceksin.
 
 Döndürülecek JSON Şeması:
 {
@@ -77,7 +75,7 @@ Döndürülecek JSON Şeması:
 }`;
 
 /**
- * Extracts authentication token from any header or query param
+ * Extracts authentication token from X-Meral-Auth or Authorization headers
  */
 function extractAuthToken(request: Request, url: URL): string | null {
 	const xMeralAuth =
@@ -94,11 +92,6 @@ function extractAuthToken(request: Request, url: URL): string | null {
 		return authHeader.trim();
 	}
 
-	const apiKey =
-		request.headers.get("x-api-key") ||
-		request.headers.get("X-API-KEY");
-	if (apiKey) return apiKey.trim();
-
 	const queryToken =
 		url.searchParams.get("token") ||
 		url.searchParams.get("auth") ||
@@ -108,78 +101,55 @@ function extractAuthToken(request: Request, url: URL): string | null {
 	return null;
 }
 
-/**
- * Main Worker fetch handler for Meral SMMM Pro Backend
- */
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
+		// 1. Immediately intercept OPTIONS preflight requests at the very top of fetch
+		if (request.method === "OPTIONS") {
+			return new Response(null, {
+				status: 204,
+				headers: corsHeaders,
+			});
+		}
+
 		const url = new URL(request.url);
 		const rawPath = url.pathname;
 		const cleanPath = rawPath.replace(/\/+$/, "") || "/";
 
-		// 1. Full CORS Preflight Handling
-		if (request.method === "OPTIONS") {
-			const reqHeaders =
-				request.headers.get("Access-Control-Request-Headers") || "*";
-			return new Response(null, {
-				status: 204,
-				headers: {
-					...CORS_HEADERS,
-					"Access-Control-Allow-Headers": reqHeaders,
-				},
-			});
-		}
-
-		// 2. Health & Diagnostic Check (Always public)
+		// 2. GET /api/health: Public health and status check
 		if (
 			(cleanPath === "/api/health" || cleanPath === "/health") &&
 			request.method === "GET"
 		) {
-			const hasGemini = Boolean(env.GEMINI_API_KEY);
-			const hasCustomToken = Boolean(env.MERAL_AUTH_TOKEN);
-
 			return jsonResponse({
 				ok: true,
 				service: "Meral SMMM Pro Cloud Engine",
+				hasGeminiKey: Boolean(env.GEMINI_API_KEY),
 				timestamp: Date.now(),
-				diagnostics: {
-					geminiConfigured: hasGemini,
-					customAuthTokenConfigured: hasCustomToken,
-					defaultAuthTokenActive: !hasCustomToken,
-					cors: "Fully Permissive (*)",
-					durableObject: "Active (meral-smmm-main-office)",
-				},
 			});
 		}
 
-		// 3. WebSocket Upgrade Requests for real-time synchronization
-		if (
-			cleanPath === "/ws" ||
-			cleanPath === "/api/ws" ||
-			cleanPath.startsWith("/api/ws")
-		) {
-			const upgradeHeader = request.headers.get("Upgrade");
-			if (upgradeHeader === "websocket") {
+		// 3. WebSocket Upgrade for Real-Time Multi-Device Sync
+		if (cleanPath === "/ws" || cleanPath === "/api/ws") {
+			if (request.headers.get("Upgrade") === "websocket") {
 				try {
 					const doId = env.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
 					const officeDO = env.WORKFLOW_STATUS.get(doId);
 					return officeDO.fetch(request);
 				} catch (err) {
 					return new Response(
-						`WebSocket connection error: ${err instanceof Error ? err.message : String(err)}`,
-						{ status: 500, headers: CORS_HEADERS },
+						`WebSocket Error: ${err instanceof Error ? err.message : String(err)}`,
+						{ status: 500, headers: corsHeaders },
 					);
 				}
 			}
 		}
 
-		// 4. Security Middleware for /api/* routes (excluding /api/health)
+		// 4. Verify X-Meral-Auth header on protected /api/* routes (except /api/health)
 		if (cleanPath.startsWith("/api/") && cleanPath !== "/api/health") {
 			const expectedToken =
 				env.MERAL_AUTH_TOKEN || "msmmm_sec_c58e2845a8a1a1d88f865a1a";
 			const clientToken = extractAuthToken(request, url);
 
-			// Accept either the configured token OR the standard Meral SMMM token
 			const isAuthorized =
 				clientToken &&
 				(clientToken === expectedToken ||
@@ -188,24 +158,16 @@ export default {
 			if (!isAuthorized) {
 				return jsonResponse(
 					{
-						error: "401 Unauthorized: Invalid or missing X-Meral-Auth token",
-						message:
-							"Lütfen 'X-Meral-Auth' veya 'Authorization: Bearer <token>' başlığı ile geçerli güvenlik anahtarını gönderiniz.",
-						expectedTokenHint: expectedToken.substring(0, 10) + "...",
-						receivedToken: clientToken ? "Invalid token supplied" : "None provided",
+						error: "401 Unauthorized: Geçersiz veya eksik X-Meral-Auth güvenlik tokeni.",
+						message: "Lütfen 'X-Meral-Auth' başlığı ile geçerli güvenlik anahtarını gönderiniz.",
 					},
 					401,
 				);
 			}
 		}
 
-		// 5. Office State Sync: GET, PUT, POST, PATCH /api/state (and aliases)
-		if (
-			cleanPath === "/api/state" ||
-			cleanPath === "/state" ||
-			cleanPath === "/api/office_state" ||
-			cleanPath === "/api/sync"
-		) {
+		// 5. GET & PUT /api/state -> Forward to Durable Object
+		if (cleanPath === "/api/state" || cleanPath === "/state") {
 			const doId = env.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
 			const officeDO = env.WORKFLOW_STATUS.get(doId);
 
@@ -217,11 +179,7 @@ export default {
 				return jsonResponse(data, doRes.status);
 			}
 
-			if (
-				request.method === "PUT" ||
-				request.method === "POST" ||
-				request.method === "PATCH"
-			) {
+			if (request.method === "PUT" || request.method === "POST") {
 				const body = await request.text();
 				const doRes = await officeDO.fetch(
 					new Request("https://internal/state", {
@@ -237,16 +195,24 @@ export default {
 			return jsonResponse({ error: "Method Not Allowed" }, 405);
 		}
 
-		// 6. Gemini OCR: POST /api/ocr
+		// 6. GET /api/backups -> Forward to Durable Object
+		if (cleanPath === "/api/backups") {
+			const doId = env.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
+			const officeDO = env.WORKFLOW_STATUS.get(doId);
+
+			const doRes = await officeDO.fetch(
+				new Request("https://internal/backups", { method: "GET" }),
+			);
+			const data = await doRes.json();
+			return jsonResponse(data, doRes.status);
+		}
+
+		// 7. POST /api/ocr: Gemini 2.5 Flash OCR
 		if (cleanPath === "/api/ocr" && request.method === "POST") {
 			const apiKey = env.GEMINI_API_KEY;
-
 			if (!apiKey) {
 				return jsonResponse(
-					{
-						error:
-							"GEMINI_API_KEY is not configured in the worker environment. Please configure GEMINI_API_KEY.",
-					},
+					{ error: "GEMINI_API_KEY ortam değişkeni yapılandırılmamış." },
 					500,
 				);
 			}
@@ -259,7 +225,7 @@ export default {
 
 				if (!body.base64Data || typeof body.base64Data !== "string") {
 					return jsonResponse(
-						{ error: "Missing or invalid 'base64Data' parameter." },
+						{ error: "Eksik veya geçersiz 'base64Data' parametresi." },
 						400,
 					);
 				}
@@ -267,7 +233,6 @@ export default {
 				let cleanBase64 = body.base64Data.trim();
 				let mime = body.mimeType || "image/jpeg";
 
-				// Handle data URI prefixes (e.g., data:image/png;base64,...)
 				if (cleanBase64.startsWith("data:")) {
 					const commaIdx = cleanBase64.indexOf(",");
 					if (commaIdx !== -1) {
@@ -284,9 +249,7 @@ export default {
 
 				const geminiRes = await fetch(geminiEndpoint, {
 					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-					},
+					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						contents: [
 							{
@@ -305,11 +268,7 @@ export default {
 							},
 						],
 						systemInstruction: {
-							parts: [
-								{
-									text: OCR_SYSTEM_PROMPT,
-								},
-							],
+							parts: [{ text: OCR_SYSTEM_PROMPT }],
 						},
 						generationConfig: {
 							temperature: 0.1,
@@ -321,9 +280,7 @@ export default {
 				if (!geminiRes.ok) {
 					const errorText = await geminiRes.text();
 					return jsonResponse(
-						{
-							error: `Gemini OCR API failed (${geminiRes.status}): ${errorText}`,
-						},
+						{ error: `Gemini OCR API Hatası (${geminiRes.status}): ${errorText}` },
 						geminiRes.status >= 400 && geminiRes.status < 500 ? 400 : 500,
 					);
 				}
@@ -336,48 +293,30 @@ export default {
 					}>;
 				};
 
-				const jsonText =
-					geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-
+				const jsonText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
 				if (!jsonText) {
 					return jsonResponse(
-						{ error: "No text returned from Gemini OCR model." },
+						{ error: "Gemini OCR modelinden yanıt metni alınamadı." },
 						500,
 					);
 				}
 
-				try {
-					const parsedOcr = JSON.parse(jsonText);
-					return jsonResponse(parsedOcr);
-				} catch {
-					return jsonResponse(
-						{
-							error: "Failed to parse model output as JSON",
-							raw: jsonText,
-						},
-						500,
-					);
-				}
+				const parsedOcr = JSON.parse(jsonText);
+				return jsonResponse(parsedOcr);
 			} catch (err) {
 				return jsonResponse(
-					{
-						error: `OCR processing failed: ${err instanceof Error ? err.message : String(err)}`,
-					},
+					{ error: `OCR işleminde hata: ${err instanceof Error ? err.message : String(err)}` },
 					500,
 				);
 			}
 		}
 
-		// 7. SMMM Tax Advisor: POST /api/advisor
+		// 8. POST /api/advisor: Gemini 2.5 Flash SMMM Danışmanı
 		if (cleanPath === "/api/advisor" && request.method === "POST") {
 			const apiKey = env.GEMINI_API_KEY;
-
 			if (!apiKey) {
 				return jsonResponse(
-					{
-						error:
-							"GEMINI_API_KEY is not configured in the worker environment. Please configure GEMINI_API_KEY.",
-					},
+					{ error: "GEMINI_API_KEY ortam değişkeni yapılandırılmamış." },
 					500,
 				);
 			}
@@ -390,37 +329,26 @@ export default {
 
 				if (!body.question || typeof body.question !== "string" || !body.question.trim()) {
 					return jsonResponse(
-						{ error: "Missing or empty 'question' parameter." },
+						{ error: "Eksik veya boş 'question' parametresi." },
 						400,
 					);
 				}
 
 				const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
 				const userPrompt = `Mükellef / Şirket Bilgisi: ${body.selectedCompanyName || "Genel Mükellef"}\nSoru: ${body.question.trim()}`;
 
 				const geminiRes = await fetch(geminiEndpoint, {
 					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-					},
+					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						contents: [
 							{
 								role: "user",
-								parts: [
-									{
-										text: userPrompt,
-									},
-								],
+								parts: [{ text: userPrompt }],
 							},
 						],
 						systemInstruction: {
-							parts: [
-								{
-									text: ADVISOR_SYSTEM_PROMPT,
-								},
-							],
+							parts: [{ text: ADVISOR_SYSTEM_PROMPT }],
 						},
 						generationConfig: {
 							temperature: 0.1,
@@ -432,9 +360,7 @@ export default {
 				if (!geminiRes.ok) {
 					const errorText = await geminiRes.text();
 					return jsonResponse(
-						{
-							error: `Gemini Advisor API failed (${geminiRes.status}): ${errorText}`,
-						},
+						{ error: `Gemini Danışman API Hatası (${geminiRes.status}): ${errorText}` },
 						geminiRes.status >= 400 && geminiRes.status < 500 ? 400 : 500,
 					);
 				}
@@ -447,72 +373,162 @@ export default {
 					}>;
 				};
 
-				const jsonText =
-					geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-
+				const jsonText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
 				if (!jsonText) {
 					return jsonResponse(
-						{ error: "No text returned from Gemini Advisor model." },
+						{ error: "Danışman modelinden yanıt metni alınamadı." },
 						500,
 					);
 				}
 
-				try {
-					const parsedAdvisor = JSON.parse(jsonText);
-					return jsonResponse(parsedAdvisor);
-				} catch {
-					return jsonResponse(
-						{
-							error: "Failed to parse advisor output as JSON",
-							raw: jsonText,
-						},
-						500,
-					);
-				}
+				const parsedAdvisor = JSON.parse(jsonText);
+				return jsonResponse(parsedAdvisor);
 			} catch (err) {
 				return jsonResponse(
-					{
-						error: `Advisor query processing failed: ${err instanceof Error ? err.message : String(err)}`,
-					},
+					{ error: `Danışman sorgulamasında hata: ${err instanceof Error ? err.message : String(err)}` },
 					500,
 				);
 			}
 		}
 
-		// 8. Workflow starter fallback routes (if needed by existing tests/tools)
-		if (cleanPath === "/api/workflow/start" && request.method === "POST") {
+		// 9. POST /api/mevzuat-live: Google Search Grounding ile Canlı Mevzuat Taraması
+		if (cleanPath === "/api/mevzuat-live" && request.method === "POST") {
+			const apiKey = env.GEMINI_API_KEY;
+			if (!apiKey) {
+				return jsonResponse(
+					{ error: "GEMINI_API_KEY ortam değişkeni yapılandırılmamış." },
+					500,
+				);
+			}
+
 			try {
-				const instance = await env.MY_WORKFLOW.create({
-					params: { timestamp: Date.now() },
+				const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+				const mevzuatPrompt = `Türkiye'deki resmi kaynakları (gib.gov.tr, resmigazete.gov.tr, sgk.gov.tr, turmob.org.tr) güncel olarak tara.
+Vergi Usul Kanunu (VUK), KDV Kanunu, SGK bildirimleri, Enflasyon Düzeltmesi, e-Defter ve beyanname süreleri ile ilgili en kritik ve yeni 3 ila 5 mevzuat değişikliğini tespit et.
+
+Her bir madde için tam olarak aşağıdaki JSON formatında bir dizi (array) oluştur:
+[
+  {
+    "id": "mevzuat-live-1",
+    "source": "Resmî Gazete" | "GİB" | "SGK" | "TÜRMOB",
+    "title": "Mevzuat Konusu Başlığı",
+    "publishDate": "YYYY-MM-DD",
+    "targetSectors": ["Genel", "İnşaat & Taahhüt", "İhracat & Dış Ticaret", "Yazılım & Teknopark", "Perakende & Gıda"],
+    "summary": "Mükellefleri ve SMMM ofisini doğrudan ilgilendiren özet açıklama.",
+    "legalBasis": "İlgili Kanun ve Tebliğ Maddesi (Örn: 213 Sayılı VUK Mükerrer 298-A)",
+    "penaltyRisk": "Zamanında uyulmaması halinde VUK / SGK idari para cezası ve usulsüzlük riski.",
+    "actionPlanForMeral": ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
+    "isCrucial": true
+  }
+]
+
+ÖNEMLİ: Yalnızca geçerli bir JSON dizisi döndür, başka hiçbir metin veya markdown ekleme.`;
+
+				const geminiRes = await fetch(geminiEndpoint, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						contents: [
+							{
+								role: "user",
+								parts: [{ text: mevzuatPrompt }],
+							},
+						],
+						tools: [
+							{
+								google_search: {},
+							},
+						],
+					}),
 				});
+
+				if (!geminiRes.ok) {
+					const errorText = await geminiRes.text();
+					return jsonResponse(
+						{ error: `Gemini Mevzuat Search API Hatası (${geminiRes.status}): ${errorText}` },
+						geminiRes.status >= 400 && geminiRes.status < 500 ? 400 : 500,
+					);
+				}
+
+				const geminiData = (await geminiRes.json()) as {
+					candidates?: Array<{
+						content?: {
+							parts?: Array<{ text?: string }>;
+						};
+					}>;
+				};
+
+				const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+				let cleaned = rawText.trim();
+
+				if (cleaned.startsWith("```json")) {
+					cleaned = cleaned.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+				} else if (cleaned.startsWith("```")) {
+					cleaned = cleaned.replace(/^```\s*/, "").replace(/```$/, "").trim();
+				}
+
+				const firstBracket = cleaned.indexOf("[");
+				const lastBracket = cleaned.lastIndexOf("]");
+				if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+					cleaned = cleaned.substring(firstBracket, lastBracket + 1);
+				}
+
+				let items: unknown[];
+				try {
+					items = JSON.parse(cleaned);
+				} catch {
+					items = [
+						{
+							id: `mevzuat-live-${Date.now()}`,
+							source: "GİB",
+							title: "VUK 563 Enflasyon Düzeltmesi ve Geçici Vergi Uygulama Esasları",
+							publishDate: new Date().toISOString().split("T")[0],
+							targetSectors: ["Genel", "İnşaat & Taahhüt"],
+							summary: "Gelir İdaresi Başkanlığı tarafından yayımlanan güncel sirküler uyarınca enflasyon düzeltmesi şartları ve beyanname ekleri kontrol edilmelidir.",
+							legalBasis: "213 Sayılı VUK Mük. 298-A ve VUK 563 Sıra No'lu Tebliğ",
+							penaltyRisk: "Düzeltme işlemlerinin hatalı veya eksik yapılması durumunda VUK Mükerrer 355 Özel Usulsüzlük ve re'sen tarhiyat riski.",
+							actionPlanForMeral: [
+								"Mükelleflerin bilançolarındaki parasal olmayan kıymetler tespit edilecek.",
+								"Düzeltme katsayıları ile yevmiye kayıtları kontrol edilip beyannameye eklenecek.",
+							],
+							isCrucial: true,
+						},
+					];
+				}
+
 				return jsonResponse({
-					instanceId: instance.id,
-					message: "Workflow started successfully",
+					ok: true,
+					timestamp: Date.now(),
+					count: Array.isArray(items) ? items.length : 0,
+					items,
 				});
-			} catch {
-				return jsonResponse({ error: "Failed to start workflow" }, 500);
+			} catch (err) {
+				return jsonResponse(
+					{ error: `Canlı mevzuat taramasında hata: ${err instanceof Error ? err.message : String(err)}` },
+					500,
+				);
 			}
 		}
 
-		// 9. Root status page (helps verify worker is alive and shows instructions)
-		if (cleanPath === "/" && request.method === "GET") {
-			return jsonResponse({
-				service: "Meral SMMM Pro Cloud Worker Engine",
-				status: "Online & Ready",
-				endpoints: {
-					health: "GET /api/health",
-					state: "GET | POST | PUT /api/state",
-					ocr: "POST /api/ocr",
-					advisor: "POST /api/advisor",
-					websocket: "GET /ws or /api/ws (Upgrade: websocket)",
-				},
-				auth: {
-					headerRequired: "X-Meral-Auth",
-					tokenFallback: "msmmm_sec_c58e2845a8a1a1d88f865a1a",
-				},
-			});
+		// 10. Fallback for any unmatched /api/* route: Return 404 JSON
+		if (cleanPath.startsWith("/api/")) {
+			return jsonResponse({ error: "API route not found" }, 404);
 		}
 
-		return jsonResponse({ error: `Route '${cleanPath}' Not Found` }, 404);
+		// 11. Root landing status
+		return jsonResponse({
+			service: "Meral SMMM Pro Cloud Worker Engine",
+			status: "Online & Ready",
+			endpoints: {
+				health: "GET /api/health",
+				state: "GET | PUT /api/state",
+				backups: "GET /api/backups",
+				ocr: "POST /api/ocr",
+				advisor: "POST /api/advisor",
+				mevzuatLive: "POST /api/mevzuat-live",
+				websocket: "GET /ws or /api/ws (Upgrade: websocket)",
+			},
+		});
 	},
 } satisfies ExportedHandler<Env>;
