@@ -76,7 +76,7 @@ export class WorkflowStatusDO extends DurableObject {
 		// 2. GET /backups: Return list of available daily backup snapshots
 		if (pathname.endsWith("/backups")) {
 			const backupMap = await this.ctx.storage.list<MeralOfficeState>({ prefix: "backup_" });
-			const backups: Array<{ key: string; date: string; updatedAt?: unknown; recordCount?: number }> = [];
+			const backups: Array<{ key: string; date: string; updatedAt?: unknown; recordCount?: number; data?: MeralOfficeState }> = [];
 
 			for (const [key, val] of backupMap.entries()) {
 				const datePart = key.replace("backup_", "");
@@ -87,6 +87,7 @@ export class WorkflowStatusDO extends DurableObject {
 					date: datePart,
 					updatedAt: val?.updatedAt,
 					recordCount: companiesCount + tasksCount,
+					data: val,
 				});
 			}
 
@@ -320,4 +321,4 @@ export class WorkflowStatusDO extends DurableObject {
 			updatedAt: body.updatedAt || Date.now(),
 		};
 	}
-} 
+}
