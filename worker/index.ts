@@ -112,7 +112,7 @@ const CURATED_MEVZUAT_RADAR = [
 		title: "GVK 40/1-d Binek Otomobil %70 Gider Kısıtlaması & %30 KKEG Uygulaması",
 		publishDate: new Date().toISOString().split("T")[0],
 		targetSectors: ["Genel", "Hizmet", "Ticaret"],
-		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya مختلف şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
+		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya বিভিন্ন şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
 		legalBasis: "193 Sayılı Gelir Vergisi Kanunu Madde 40/1-d ve 324 Seri No'lu GVGT",
 		penaltyRisk: "KKEG ayrılmadan %100 gider yazılması halinde matrah farkı üzerinden VUK 344 Vergi Ziyaı cezası uygulanır.",
 		actionPlanForMeral: [
@@ -488,13 +488,18 @@ export default {
 			return jsonResponse({ error: "Method Not Allowed" }, 405);
 		}
 
-		// 6. GET /api/backups -> Forward to Durable Object
-		if (cleanPath === "/api/backups") {
+		// 6. GET /api/backups & POST /api/backups/restore/:key -> Forward to Durable Object
+		if (cleanPath === "/api/backups" || cleanPath.startsWith("/api/backups/restore/")) {
 			const doId = extEnv.WORKFLOW_STATUS.idFromName("meral-smmm-main-office");
 			const officeDO = extEnv.WORKFLOW_STATUS.get(doId);
 
+			const subPath = cleanPath.replace(/^\/api/, "");
 			const doRes = await officeDO.fetch(
-				new Request("https://internal/backups", { method: "GET" }),
+				new Request(`https://internal${subPath}`, { 
+					method: request.method,
+					headers: request.headers,
+					body: request.method !== "GET" ? await request.text() : undefined,
+				}),
 			);
 			const data = await doRes.json();
 			return jsonResponse(data, doRes.status);
@@ -640,7 +645,7 @@ GÖREV: Google Search Grounding ile Türkiye Cumhuriyeti Resmî Gazete (resmigaz
 ZORUNLU OTANTİKLİK VE GÜNCELLİK KURALLARI:
 1. YALNIZCA ${ninetyDaysAgo} ile ${todayStr} tarihleri arasında (son 90 gün içinde) Resmî Gazete'de yayımlanan Vergi/SGK Tebliğleri, GİB Sirküleri, SGK Genelgeleri veya TÜRMOB mevzuat duyurularını bul.
 2. 90 günden daha eski, geçmiş yıllara ait sirkülerleri KESİNLİKLE LİSTELEME.
-3. Her bir maddenin "publishDate" değeri, ilgili resmi tebliğin/sirkülerin Resmî Gazete'de veya GİB/SGK sitesinde yayımlandığı GERÇEK ve OTANTİK تاریخ (YYYY-MM-DD formatında) olmalıdır. Kesinlikle hayali veya uydurma تاریخ yazma!
+3. Her bir maddenin "publishDate" değeri, ilgili resmi tebliğin/sirkülerin Resmî Gazete'de veya GİB/SGK sitesinde yayımlandığı GERÇEK ve OTANTİK tarih (YYYY-MM-DD formatında) olmalıdır. Kesinlikle hayali veya uydurma tarih yazma!
 4. "legalBasis" alanında resmi tebliğ numarası (Örn: "VUK Genel Tebliği Sıra No: ...", "Resmî Gazete Sayı: ...") mutlaka yer almalıdır.
 
 Her bir madde için tam olarak aşağıdaki JSON şemasına uygun dizi (array) döndür:
@@ -654,7 +659,7 @@ Her bir madde için tam olarak aşağıdaki JSON şemasına uygun dizi (array) d
     "summary": "Sirkülerin SMMM ofisini ve mükellefleri doğrudan ilgilendiren özeti.",
     "legalBasis": "İlgili Kanun, Resmî Gazete Sayısı ve Tebliğ Sıra No",
     "penaltyRisk": "Zamanında uyulmaması halinde VUK / SGK idari para cezası ve usulsüzlük riski.",
-    "actionPlanForMeral": ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
+    "actionPlanForMeral: ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
     "isCrucial": true
   }
 ]
