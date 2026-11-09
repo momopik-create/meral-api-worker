@@ -95,6 +95,20 @@ export class WorkflowStatusDO extends DurableObject {
 			return Response.json({ ok: true, count: backups.length, backups });
 		}
 
+		// 2.1 POST /backups/restore/:key -> Restore a specific historical snapshot
+		if (pathname.includes("/backups/restore/")) {
+			const key = pathname.split("/backups/restore/")[1];
+			const lookupKey = key.startsWith("backup_") ? key : `backup_${key}`;
+			const backup = await this.ctx.storage.get<MeralOfficeState>(lookupKey);
+			if (!backup) {
+				return Response.json({ error: `Yedek bulunamadı: ${lookupKey}` }, { status: 404 });
+			}
+			await this.ctx.storage.put("office_state", backup);
+			this.cachedState = backup;
+			this.broadcast({ type: "state_synced", data: backup, updatedAt: Date.now() });
+			return Response.json({ ok: true, message: "Yedek başarıyla geri yüklendi", restoredKey: lookupKey, data: backup });
+		}
+
 		// 3. /state (GET, PUT, POST)
 		if (
 			pathname.endsWith("/state") ||
