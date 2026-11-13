@@ -9,6 +9,12 @@ export interface ExtendedEnv {
 	MERAL_AUTH_TOKEN?: string;
 	AI_API_KEY?: string;
 	OPENAI_API_KEY?: string;
+	ANTHROPIC_API_KEY?: string;
+	OPENROUTER_API_KEY?: string;
+	GROQ_API_KEY?: string;
+	XAI_API_KEY?: string;
+	MISTRAL_API_KEY?: string;
+	AI_PROVIDER?: string;
 	OPENAI_API_BASE?: string;
 	AI_MODEL?: string;
 	GEMINI_MODEL?: string;
@@ -41,17 +47,12 @@ function jsonResponse(
 }
 
 /**
- * Supported Gemini models in preferred priority order:
- * gemini-3.8-flash (Latest recommended by Google in 2026)
- * gemini-2.5-flash
- * gemini-2.0-flash
- * gemini-1.5-flash
- * gemini-1.5-pro
+ * Supported Gemini models in preferred priority order (authentic Google models)
  */
 const DEFAULT_GEMINI_MODELS = [
-	"gemini-3.8-flash",
 	"gemini-2.5-flash",
 	"gemini-2.0-flash",
+	"gemini-2.5-pro",
 	"gemini-1.5-flash",
 	"gemini-1.5-pro",
 ];
@@ -112,7 +113,7 @@ const CURATED_MEVZUAT_RADAR = [
 		title: "GVK 40/1-d Binek Otomobil %70 Gider Kısıtlaması & %30 KKEG Uygulaması",
 		publishDate: new Date().toISOString().split("T")[0],
 		targetSectors: ["Genel", "Hizmet", "Ticaret"],
-		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya বিভিন্ন şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
+		summary: "Faaliyetleri kısmen veya tamamen binek otolarının kiralanması veya विभिन्न şekillerde işletilmesi olanların bu amaçla kullandıkları hariç olmak üzere, binek araçların akaryakıt, bakım, otopark giderlerinin en fazla %70'i gider yazılabilir; kalan %30'u KKEG olarak 689 hesaba kaydedilir.",
 		legalBasis: "193 Sayılı Gelir Vergisi Kanunu Madde 40/1-d ve 324 Seri No'lu GVGT",
 		penaltyRisk: "KKEG ayrılmadan %100 gider yazılması halinde matrah farkı üzerinden VUK 344 Vergi Ziyaı cezası uygulanır.",
 		actionPlanForMeral: [
@@ -186,6 +187,137 @@ Döndürülecek JSON Şeması:
   "yasalDayanakVeRisk": "İlgili kanun maddeleri (VUK, KDV, GVK, KVK, SGK), beyanname ve bildirim süreleri, olası vergi cezası/usulsüzlük riskleri ve dikkat edilmesi gereken hususlar."
 }`;
 
+interface ClientAiConfig {
+	apiKey?: string;
+	provider?: string;
+	baseUrl?: string;
+	model?: string;
+}
+
+const WORKER_PROVIDER_URLS: Record<string, string> = {
+	openai: "https://api.openai.com/v1",
+	openrouter: "https://openrouter.ai/api/v1",
+	groq: "https://api.groq.com/openai/v1",
+	xai: "https://api.x.ai/v1",
+	deepseek: "https://api.deepseek.com/v1",
+	mistral: "https://api.mistral.ai/v1",
+	together: "https://api.together.xyz/v1",
+	fireworks: "https://api.fireworks.ai/inference/v1",
+	huggingface: "https://router.huggingface.co/v1",
+};
+
+const WORKER_VISION_MODELS: Record<string, string[]> = {
+	openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-4-turbo"],
+	openrouter: ["google/gemini-2.5-flash", "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "qwen/qwen2.5-vl-72b-instruct"],
+	groq: ["meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct", "llama-3.2-90b-vision-preview"],
+	xai: ["grok-2-vision-1212", "grok-vision-beta"],
+	mistral: ["pixtral-12b-2409", "pixtral-large-latest"],
+	together: ["meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo", "Qwen/Qwen2.5-VL-72B-Instruct"],
+	fireworks: ["accounts/fireworks/models/llama-v3p2-11b-vision-instruct"],
+	huggingface: ["Qwen/Qwen2.5-VL-7B-Instruct"],
+};
+
+const WORKER_TEXT_MODELS: Record<string, string[]> = {
+	openai: ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
+	openrouter: ["google/gemini-2.5-flash", "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"],
+	groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+	xai: ["grok-3-mini", "grok-2-latest"],
+	deepseek: ["deepseek-chat", "deepseek-reasoner"],
+	mistral: ["mistral-small-latest", "mistral-large-latest"],
+	together: ["meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"],
+	fireworks: ["accounts/fireworks/models/llama-v3p3-70b-instruct"],
+	huggingface: ["Qwen/Qwen2.5-72B-Instruct"],
+};
+
+function detectWorkerProvider(apiKey: string, explicitProvider?: string, customBase?: string): string {
+	if (explicitProvider && explicitProvider !== "auto") return explicitProvider.toLowerCase();
+	const base = (customBase || "").toLowerCase();
+	if (base) {
+		if (base.includes("generativelanguage.googleapis.com") && !base.includes("/openai")) return "gemini";
+		if (base.includes("api.anthropic.com")) return "anthropic";
+		if (base.includes("openrouter.ai")) return "openrouter";
+		if (base.includes("api.groq.com")) return "groq";
+		if (base.includes("api.x.ai")) return "xai";
+		if (base.includes("api.deepseek.com")) return "deepseek";
+		if (base.includes("api.mistral.ai")) return "mistral";
+		if (base.includes("api.together.xyz")) return "together";
+		if (base.includes("api.fireworks.ai")) return "fireworks";
+		if (base.includes("router.huggingface.co")) return "huggingface";
+		return "custom";
+	}
+	if (apiKey.startsWith("AIza")) return "gemini";
+	if (apiKey.startsWith("sk-ant-")) return "anthropic";
+	if (apiKey.startsWith("sk-or-")) return "openrouter";
+	if (apiKey.startsWith("gsk_")) return "groq";
+	if (apiKey.startsWith("xai-")) return "xai";
+	if (apiKey.startsWith("fw_")) return "fireworks";
+	if (apiKey.startsWith("hf_")) return "huggingface";
+	if (apiKey.startsWith("sk-")) return "openai";
+	return "custom";
+}
+
+function normalizeWorkerOpenAiBase(rawUrl: string): string {
+	let clean = (rawUrl || "").trim().replace(/\/+$/, "");
+	if (!clean) return "https://api.openai.com/v1";
+	clean = clean.replace(/\/chat\/completions$/i, "").replace(/\/models$/i, "").replace(/\/+$/, "");
+	try {
+		const u = new URL(clean);
+		if (!u.pathname || u.pathname === "/") return `${clean}/v1`;
+	} catch {}
+	return clean;
+}
+
+async function discoverWorkerGeminiModels(apiKey: string): Promise<string[]> {
+	try {
+		const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+		if (!res.ok) return [];
+		const data = (await res.json()) as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
+		return (data.models || [])
+			.filter(
+				(m) =>
+					m.name &&
+					Array.isArray(m.supportedGenerationMethods) &&
+					m.supportedGenerationMethods.includes("generateContent") &&
+					!m.name.includes("embedding") &&
+					!m.name.includes("imagen") &&
+					!m.name.includes("veo") &&
+					!m.name.includes("tts"),
+			)
+			.map((m) => m.name!.replace(/^models\//, ""))
+			.slice(0, 5);
+	} catch {
+		return [];
+	}
+}
+
+async function discoverWorkerOpenAiModels(baseUrl: string, apiKey: string, needVision: boolean): Promise<string[]> {
+	try {
+		const res = await fetch(`${baseUrl}/models`, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${apiKey}` },
+		});
+		if (!res.ok) return [];
+		const data = (await res.json()) as { data?: Array<{ id?: string }> };
+		const ids = (data.data || [])
+			.map((m) => m.id || "")
+			.filter((id) => Boolean(id) && !id.includes("embedding") && !id.includes("whisper") && !id.includes("tts") && !id.includes("dall-e"));
+		if (needVision) {
+			ids.sort((a, b) => {
+				const score = (id: string) => {
+					const l = id.toLowerCase();
+					if (l.includes("vision") || l.includes("-vl") || l.includes("pixtral")) return 1;
+					if (l.includes("gpt-4o") || l.includes("gpt-4.1") || l.includes("gemini") || l.includes("claude")) return 2;
+					return 10;
+				};
+				return score(a) - score(b);
+			});
+		}
+		return ids.slice(0, 5);
+	} catch {
+		return [];
+	}
+}
+
 /**
  * Universal AI Caller with Multi-Model & Multi-Provider Cascade Fallback.
  */
@@ -198,166 +330,297 @@ async function callAiWithFallback(
 		useSearchGrounding?: boolean;
 		temperature?: number;
 		responseMimeType?: string;
+		aiConfig?: ClientAiConfig;
 	},
 ): Promise<string> {
 	const extEnv = env as unknown as ExtendedEnv;
+	const clientCfg = options.aiConfig;
+
 	const apiKey =
+		(clientCfg?.apiKey && clientCfg.apiKey.trim()) ||
 		extEnv.GEMINI_API_KEY ||
 		extEnv.AI_API_KEY ||
-		extEnv.OPENAI_API_KEY;
+		extEnv.OPENAI_API_KEY ||
+		extEnv.ANTHROPIC_API_KEY ||
+		extEnv.OPENROUTER_API_KEY ||
+		extEnv.GROQ_API_KEY ||
+		extEnv.XAI_API_KEY ||
+		extEnv.MISTRAL_API_KEY;
 
 	if (!apiKey) {
-		throw new Error("API Anahtarı (GEMINI_API_KEY) tanımlanmamış.");
+		throw new Error("API Anahtarı tanımlanmamış.");
 	}
 
-	const isExplicitOpenAi =
-		apiKey.startsWith("sk-") ||
-		Boolean(extEnv.OPENAI_API_BASE);
+	const rawBase = clientCfg?.baseUrl || extEnv.OPENAI_API_BASE || "";
+	const preferredProvider = clientCfg?.provider || extEnv.AI_PROVIDER || "auto";
+	const preferredModel = clientCfg?.model || extEnv.AI_MODEL || extEnv.GEMINI_MODEL || "";
+	const provider = detectWorkerProvider(apiKey, preferredProvider, rawBase);
 
-	// 1. OpenAI-Compatible Branch
-	if (isExplicitOpenAi) {
-		const rawBase = extEnv.OPENAI_API_BASE;
-		const baseUrl = rawBase ? rawBase.replace(/\/+$/, "") : "https://api.openai.com/v1";
-		const model = extEnv.AI_MODEL || "gpt-4o-mini";
+	// 1. Anthropic Claude Branch
+	if (provider === "anthropic") {
+		const claudeModels = preferredModel
+			? [preferredModel, "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
+			: ["claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"];
 
-		const messages: Array<{ role: string; content: unknown }> = [
-			{ role: "system", content: options.systemPrompt },
-		];
-
+		const contentParts: Array<Record<string, unknown>> = [];
 		if (options.inlineImage) {
-			messages.push({
-				role: "user",
-				content: [
-					{ type: "text", text: options.userPrompt },
-					{
-						type: "image_url",
-						image_url: {
-							url: `data:${options.inlineImage.mimeType};base64,${options.inlineImage.base64Data}`,
-						},
-					},
-				],
-			});
-		} else {
-			messages.push({ role: "user", content: options.userPrompt });
-		}
-
-		const res = await fetch(`${baseUrl}/chat/completions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify({
-				model,
-				messages,
-				temperature: options.temperature ?? 0.1,
-				...(options.responseMimeType === "application/json"
-					? { response_format: { type: "json_object" } }
-					: {}),
-			}),
-		});
-
-		if (!res.ok) {
-			const errText = await res.text();
-			throw new Error(`OpenAI API Hatası (${res.status}): ${errText}`);
-		}
-
-		const data = (await res.json()) as {
-			choices?: Array<{ message?: { content?: string } }>;
-		};
-		const content = data?.choices?.[0]?.message?.content;
-		if (!content) throw new Error("OpenAI yanıtından metin alınamadı.");
-		return content;
-	}
-
-	// 2. Google Gemini Branch with Multi-Model Cascade
-	const preferredModel = extEnv.AI_MODEL || extEnv.GEMINI_MODEL;
-
-	const modelsToTry = preferredModel
-		? [preferredModel, ...DEFAULT_GEMINI_MODELS.filter((m) => m !== preferredModel)]
-		: DEFAULT_GEMINI_MODELS;
-
-	let lastError: Error | null = null;
-
-	for (const model of modelsToTry) {
-		const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-		const attempts = options.useSearchGrounding ? [true, false] : [false];
-
-		for (const withSearch of attempts) {
-			try {
-				const bodyPayload: Record<string, unknown> = {
-					contents: [
-						{
-							role: "user",
-							parts: [
-								{ text: options.userPrompt },
-								...(options.inlineImage
-									? [
-											{
-												inlineData: {
-													mimeType: options.inlineImage.mimeType,
-													data: options.inlineImage.base64Data,
-												},
-											},
-										]
-									: []),
-							],
-						},
-					],
-					systemInstruction: {
-						parts: [{ text: options.systemPrompt }],
-					},
-					generationConfig: {
-						temperature: options.temperature ?? 0.1,
-						...(options.responseMimeType
-							? { responseMimeType: options.responseMimeType }
-							: {}),
-					},
-				};
-
-				if (withSearch) {
-					bodyPayload.tools = [{ google_search: {} }];
-				}
-
-				const res = await fetch(endpoint, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(bodyPayload),
+			if (options.inlineImage.mimeType === "application/pdf") {
+				contentParts.push({
+					type: "document",
+					source: { type: "base64", media_type: "application/pdf", data: options.inlineImage.base64Data },
 				});
-
-				if (!res.ok) {
-					const errorText = await res.text();
-					if (res.status === 404) {
-						lastError = new Error(`Model ${model} not found (404): ${errorText}`);
-						break;
-					}
-					if (withSearch && res.status >= 400 && res.status < 500) {
-						lastError = new Error(`Search grounding not supported on ${model}: ${errorText}`);
-						continue;
-					}
-					lastError = new Error(`Gemini API Error (${res.status}) on ${model}: ${errorText}`);
-					continue;
-				}
-
-				const data = (await res.json()) as {
-					candidates?: Array<{
-						content?: {
-							parts?: Array<{ text?: string }>;
-						};
-					}>;
-				};
-
-				const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-				if (text) {
-					return text;
-				}
-			} catch (err) {
-				lastError = err instanceof Error ? err : new Error(String(err));
+			} else {
+				const supportedMime = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(options.inlineImage.mimeType)
+					? options.inlineImage.mimeType
+					: "image/jpeg";
+				contentParts.push({
+					type: "image",
+					source: { type: "base64", media_type: supportedMime, data: options.inlineImage.base64Data },
+				});
 			}
 		}
+		contentParts.push({ type: "text", text: options.userPrompt });
+
+		let lastClaudeErr: Error | null = null;
+		for (const model of claudeModels) {
+			const res = await fetch("https://api.anthropic.com/v1/messages", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"x-api-key": apiKey,
+					"anthropic-version": "2023-06-01",
+				},
+				body: JSON.stringify({
+					model,
+					max_tokens: 4096,
+					temperature: options.temperature ?? 0.1,
+					system: options.systemPrompt,
+					messages: [{ role: "user", content: contentParts }],
+				}),
+			});
+			if (!res.ok) {
+				lastClaudeErr = new Error(`Anthropic (${model}) Hatası (${res.status}): ${await res.text()}`);
+				if (res.status === 401 || res.status === 403) throw lastClaudeErr;
+				continue;
+			}
+			const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
+			const text = data?.content?.find((c) => c.type === "text")?.text;
+			if (text) return text;
+		}
+		throw lastClaudeErr || new Error("Anthropic Claude yanıt vermedi.");
 	}
 
-	throw lastError || new Error("Hiçbir yapay zeka modeli yanıt vermedi.");
+	// 2. OpenAI-Compatible Branch (OpenAI, OpenRouter, Groq, xAI, Mistral, Together, DeepSeek, Fireworks, HuggingFace, Custom)
+	if (provider !== "gemini") {
+		const callOpenAiTarget = async (targetProvider: string, overrideBase?: string): Promise<string> => {
+			const baseUrl = normalizeWorkerOpenAiBase(
+				overrideBase || WORKER_PROVIDER_URLS[targetProvider] || "https://api.openai.com/v1",
+			);
+			const defaultList = options.inlineImage
+				? WORKER_VISION_MODELS[targetProvider] || WORKER_VISION_MODELS.openai
+				: WORKER_TEXT_MODELS[targetProvider] || WORKER_TEXT_MODELS.openai;
+
+			let models = preferredModel
+				? [preferredModel, ...defaultList.filter((m) => m !== preferredModel)]
+				: [...defaultList];
+
+			if (targetProvider === "custom" && !preferredModel) {
+				const discovered = await discoverWorkerOpenAiModels(baseUrl, apiKey, Boolean(options.inlineImage));
+				if (discovered.length > 0) models = [...discovered, ...models.filter((m) => !discovered.includes(m))];
+			}
+
+			const messages: Array<{ role: string; content: unknown }> = [
+				{ role: "system", content: options.systemPrompt },
+			];
+
+			if (options.inlineImage) {
+				if (options.inlineImage.mimeType === "application/pdf") {
+					throw new Error("PDF dosyaları Gemini veya Claude API ile taranabilir; OpenAI uyumlu modeller için görsel (JPG/PNG) yükleyin.");
+				}
+				messages.push({
+					role: "user",
+					content: [
+						{ type: "text", text: options.userPrompt },
+						{
+							type: "image_url",
+							image_url: {
+								url: `data:${options.inlineImage.mimeType};base64,${options.inlineImage.base64Data}`,
+							},
+						},
+					],
+				});
+			} else {
+				messages.push({ role: "user", content: options.userPrompt });
+			}
+
+			const tryModelSet = async (modelSet: string[]): Promise<string | null> => {
+				let lastErr: Error | null = null;
+				for (const model of modelSet) {
+					const jsonAttempts = options.responseMimeType === "application/json" ? [true, false] : [false];
+					for (const withJsonFormat of jsonAttempts) {
+						const res = await fetch(`${baseUrl}/chat/completions`, {
+							method: "POST",
+							headers: {
+								"Content-Type": "application/json",
+								Authorization: `Bearer ${apiKey}`,
+							},
+							body: JSON.stringify({
+								model,
+								messages,
+								temperature: options.temperature ?? 0.1,
+								...(withJsonFormat ? { response_format: { type: "json_object" } } : {}),
+							}),
+						});
+						if (!res.ok) {
+							const errText = await res.text();
+							lastErr = new Error(`${targetProvider.toUpperCase()} (${model}) Hatası (${res.status}): ${errText}`);
+							if (res.status === 400 && withJsonFormat) continue;
+							if (res.status === 401) throw lastErr;
+							break;
+						}
+						const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+						const content = data?.choices?.[0]?.message?.content;
+						if (content) return content;
+					}
+				}
+				if (lastErr) throw lastErr;
+				return null;
+			};
+
+			try {
+				const out = await tryModelSet(models);
+				if (out) return out;
+			} catch (err) {
+				if (!(err instanceof Error && err.message.includes("(401)"))) {
+					const discovered = await discoverWorkerOpenAiModels(baseUrl, apiKey, Boolean(options.inlineImage));
+					const unseen = discovered.filter((m) => !models.includes(m));
+					if (unseen.length > 0) {
+						const out2 = await tryModelSet(unseen);
+						if (out2) return out2;
+					}
+				}
+				throw err;
+			}
+			throw new Error(`${targetProvider} yanıt vermedi.`);
+		};
+
+		if (provider === "custom" && !rawBase) {
+			let lastProbeErr: Error | null = null;
+			for (const p of ["mistral", "together", "openai"]) {
+				try {
+					return await callOpenAiTarget(p);
+				} catch (err) {
+					lastProbeErr = err instanceof Error ? err : new Error(String(err));
+				}
+			}
+			throw lastProbeErr || new Error("API anahtarı hiçbir sağlayıcı ile doğrulanamadı.");
+		}
+
+		return await callOpenAiTarget(provider, rawBase || undefined);
+	}
+
+	// 3. Google Gemini Branch with Multi-Model Cascade & Auto-Discovery
+	const modelsToTry = preferredModel
+		? [preferredModel, ...DEFAULT_GEMINI_MODELS.filter((m) => m !== preferredModel)]
+		: [...DEFAULT_GEMINI_MODELS];
+
+	const runGeminiList = async (list: string[]): Promise<string | null> => {
+		let lastError: Error | null = null;
+		for (const model of list) {
+			const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+			const attempts = options.useSearchGrounding ? [true, false] : [false];
+
+			for (const withSearch of attempts) {
+				try {
+					const bodyPayload: Record<string, unknown> = {
+						contents: [
+							{
+								role: "user",
+								parts: [
+									{ text: options.userPrompt },
+									...(options.inlineImage
+										? [
+												{
+													inlineData: {
+														mimeType: options.inlineImage.mimeType,
+														data: options.inlineImage.base64Data,
+													},
+												},
+											]
+										: []),
+								],
+							},
+						],
+						systemInstruction: {
+							parts: [{ text: options.systemPrompt }],
+						},
+						generationConfig: {
+							temperature: options.temperature ?? 0.1,
+							...(options.responseMimeType
+								? { responseMimeType: options.responseMimeType }
+								: {}),
+						},
+					};
+
+					if (withSearch) {
+						bodyPayload.tools = [{ google_search: {} }];
+					}
+
+					const res = await fetch(endpoint, {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(bodyPayload),
+					});
+
+					if (!res.ok) {
+						const errorText = await res.text();
+						if (res.status === 404) {
+							lastError = new Error(`Model ${model} not found (404): ${errorText}`);
+							break;
+						}
+						if (withSearch && res.status >= 400 && res.status < 500) {
+							lastError = new Error(`Search grounding not supported on ${model}: ${errorText}`);
+							continue;
+						}
+						lastError = new Error(`Gemini API Error (${res.status}) on ${model}: ${errorText}`);
+						continue;
+					}
+
+					const data = (await res.json()) as {
+						candidates?: Array<{
+							content?: {
+								parts?: Array<{ text?: string }>;
+							};
+						}>;
+					};
+
+					const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+					if (text) {
+						return text;
+					}
+				} catch (err) {
+					lastError = err instanceof Error ? err : new Error(String(err));
+				}
+			}
+		}
+		if (lastError) throw lastError;
+		return null;
+	};
+
+	try {
+		const resText = await runGeminiList(modelsToTry);
+		if (resText) return resText;
+	} catch (firstErr) {
+		const discovered = await discoverWorkerGeminiModels(apiKey);
+		const unseen = discovered.filter((m) => !modelsToTry.includes(m));
+		if (unseen.length > 0) {
+			const resText2 = await runGeminiList(unseen);
+			if (resText2) return resText2;
+		}
+		throw firstErr;
+	}
+
+	throw new Error("Hiçbir yapay zeka modeli yanıt vermedi.");
 }
 
 /**
@@ -414,7 +677,12 @@ export default {
 				hasGeminiKey: Boolean(
 					extEnv.GEMINI_API_KEY ||
 					extEnv.AI_API_KEY ||
-					extEnv.OPENAI_API_KEY,
+					extEnv.OPENAI_API_KEY ||
+					extEnv.ANTHROPIC_API_KEY ||
+					extEnv.OPENROUTER_API_KEY ||
+					extEnv.GROQ_API_KEY ||
+					extEnv.XAI_API_KEY ||
+					extEnv.MISTRAL_API_KEY,
 				),
 				supportedModels: DEFAULT_GEMINI_MODELS,
 				timestamp: Date.now(),
@@ -505,12 +773,13 @@ export default {
 			return jsonResponse(data, doRes.status);
 		}
 
-		// 7. POST /api/ocr: Multi-Model & Multi-Provider OCR (gemini-3.8-flash default)
+		// 7. POST /api/ocr: Multi-Model & Multi-Provider OCR
 		if (cleanPath === "/api/ocr" && request.method === "POST") {
 			try {
 				const body = (await request.json()) as {
 					base64Data?: string;
 					mimeType?: string;
+					aiConfig?: ClientAiConfig;
 				};
 
 				if (!body.base64Data || typeof body.base64Data !== "string") {
@@ -544,6 +813,7 @@ export default {
 					},
 					temperature: 0.1,
 					responseMimeType: "application/json",
+					aiConfig: body.aiConfig,
 				});
 
 				let cleaned = rawText.trim();
@@ -575,6 +845,7 @@ export default {
 				const body = (await request.json()) as {
 					question?: string;
 					selectedCompanyName?: string;
+					aiConfig?: ClientAiConfig;
 				};
 
 				if (!body.question || typeof body.question !== "string" || !body.question.trim()) {
@@ -593,6 +864,7 @@ export default {
 						userPrompt,
 						temperature: 0.1,
 						responseMimeType: "application/json",
+						aiConfig: body.aiConfig,
 					});
 				} catch (aiErr) {
 					console.warn("AI advisor call failed, falling back to deterministic expert advice:", aiErr);
@@ -659,7 +931,7 @@ Her bir madde için tam olarak aşağıdaki JSON şemasına uygun dizi (array) d
     "summary": "Sirkülerin SMMM ofisini ve mükellefleri doğrudan ilgilendiren özeti.",
     "legalBasis": "İlgili Kanun, Resmî Gazete Sayısı ve Tebliğ Sıra No",
     "penaltyRisk": "Zamanında uyulmaması halinde VUK / SGK idari para cezası ve usulsüzlük riski.",
-    "actionPlanForMeral: ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
+    "actionPlanForMeral": ["SMMM Meral Hanım'ın mükellefleri bilgilendirmek ve beyannameleri hazırlamak için atması gereken somut adımlar"],
     "isCrucial": true
   }
 ]
