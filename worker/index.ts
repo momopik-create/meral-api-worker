@@ -233,7 +233,12 @@ function detectWorkerProvider(apiKey: string, explicitProvider?: string, customB
 	if (explicitProvider && explicitProvider !== "auto") return explicitProvider.toLowerCase();
 	const base = (customBase || "").toLowerCase();
 	if (base) {
-		if (base.includes("generativelanguage.googleapis.com") && !base.includes("/openai")) return "gemini";
+		if (
+			(base.includes("generativelanguage.googleapis.com") && !base.includes("/openai")) ||
+			base.includes("aiplatform.googleapis.com")
+		) {
+			return "gemini";
+		}
 		if (base.includes("api.anthropic.com")) return "anthropic";
 		if (base.includes("openrouter.ai")) return "openrouter";
 		if (base.includes("api.groq.com")) return "groq";
@@ -245,15 +250,32 @@ function detectWorkerProvider(apiKey: string, explicitProvider?: string, customB
 		if (base.includes("router.huggingface.co")) return "huggingface";
 		return "custom";
 	}
-	if (apiKey.startsWith("AIza")) return "gemini";
-	if (apiKey.startsWith("sk-ant-")) return "anthropic";
-	if (apiKey.startsWith("sk-or-")) return "openrouter";
-	if (apiKey.startsWith("gsk_")) return "groq";
-	if (apiKey.startsWith("xai-")) return "xai";
-	if (apiKey.startsWith("fw_")) return "fireworks";
-	if (apiKey.startsWith("hf_")) return "huggingface";
-	if (apiKey.startsWith("sk-")) return "openai";
+	const trimmedKey = (apiKey || "").trim();
+	if (trimmedKey.startsWith("AIza") || trimmedKey.startsWith("AQ.")) return "gemini";
+	if (trimmedKey.startsWith("sk-ant-")) return "anthropic";
+	if (trimmedKey.startsWith("sk-or-")) return "openrouter";
+	if (trimmedKey.startsWith("gsk_")) return "groq";
+	if (trimmedKey.startsWith("xai-")) return "xai";
+	if (trimmedKey.startsWith("fw_")) return "fireworks";
+	if (trimmedKey.startsWith("hf_")) return "huggingface";
+	if (trimmedKey.startsWith("sk-")) return "openai";
 	return "custom";
+}
+
+function getWorkerGoogleEndpoints(apiKey: string, customBase?: string): string[] {
+	const cleanCustom = (customBase || "").trim().replace(/\/+$/, "");
+	if (cleanCustom) return [cleanCustom];
+	if ((apiKey || "").trim().startsWith("AQ.")) {
+		return [
+			"https://aiplatform.googleapis.com/v1/publishers/google",
+			"https://aiplatform.googleapis.com/v1beta1/publishers/google",
+			"https://generativelanguage.googleapis.com/v1beta",
+		];
+	}
+	return [
+		"https://generativelanguage.googleapis.com/v1beta",
+		"https://aiplatform.googleapis.com/v1/publishers/google",
+	];
 }
 
 function normalizeWorkerOpenAiBase(rawUrl: string): string {
@@ -519,18 +541,35 @@ async function callAiWithFallback(
 		return await callOpenAiTarget(provider, rawBase || undefined);
 	}
 
-	// 3. Google Gemini Branch with Multi-Model Cascade & Auto-Discovery
+	// 3. Google Gemini & Vertex AI Express Branch with Multi-Model Cascade & Auto-Discovery
 	const modelsToTry = preferredModel
 		? [preferredModel, ...DEFAULT_GEMINI_MODELS.filter((m) => m !== preferredModel)]
 		: [...DEFAULT_GEMINI_MODELS];
 
-	const runGeminiList = async (list: string[]): Promise<string | null> => {
-		let lastError: Error | null = null;
-		for (const model of list) {
-			const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-			const attempts = options.useSearchGrounding ? [true, false] : [false];
+	const googleEndpoints = getWorkerGoogleEndpoints(apiKey, rawBase);
 
-			for (const withSearch of attempts) {
+	const runGeminiList = async (baseEndpoint: string, list: string[]): Promise<string | null> => {
+		let lastError: Error | null = null;
+		const isVertexEndpoint = baseEndpoint.includes("aiplatform.googleapis.com");
+		for (const model of list) {
+			const endpoint = isVertexEndpoint
+				? `${baseEndpoint}/models/${encodeURIComponent(model)}:generateContent`
+				: `${baseEndpoint}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+			const attempts = options.useSearchGrounding
+				? [
+						{ withSearch: true, withJsonMime: Boolean(options.responseMimeType) },
+						{ withSearch: false, withJsonMime: Boolean(options.responseMimeType) },
+						{ withSearch: false, withJsonMime: false },
+					]
+				: options.responseMimeType
+					? [
+							{ withSearch: false, withJsonMime: true },
+							{ withSearch: false, withJsonMime: false },
+						]
+					: [{ withSearch: false, withJsonMime: false }];
+
+			for (const attempt of attempts) {
 				try {
 					const bodyPayload: Record<string, unknown> = {
 						contents: [
@@ -556,34 +595,38 @@ async function callAiWithFallback(
 						},
 						generationConfig: {
 							temperature: options.temperature ?? 0.1,
-							...(options.responseMimeType
+							...(attempt.withJsonMime && options.responseMimeType
 								? { responseMimeType: options.responseMimeType }
 								: {}),
 						},
 					};
 
-					if (withSearch) {
+					if (attempt.withSearch) {
 						bodyPayload.tools = [{ google_search: {} }];
 					}
 
 					const res = await fetch(endpoint, {
 						method: "POST",
-						headers: { "Content-Type": "application/json" },
+						headers: {
+							"Content-Type": "application/json",
+							"x-goog-api-key": apiKey,
+						},
 						body: JSON.stringify(bodyPayload),
 					});
 
 					if (!res.ok) {
 						const errorText = await res.text();
+						lastError = new Error(`Google AI (${model}) Hatası (${res.status}): ${errorText}`);
+						if (res.status === 401 || res.status === 403) {
+							throw lastError;
+						}
 						if (res.status === 404) {
-							lastError = new Error(`Model ${model} not found (404): ${errorText}`);
 							break;
 						}
-						if (withSearch && res.status >= 400 && res.status < 500) {
-							lastError = new Error(`Search grounding not supported on ${model}: ${errorText}`);
+						if (res.status >= 400 && res.status < 500) {
 							continue;
 						}
-						lastError = new Error(`Gemini API Error (${res.status}) on ${model}: ${errorText}`);
-						continue;
+						break;
 					}
 
 					const data = (await res.json()) as {
@@ -600,6 +643,9 @@ async function callAiWithFallback(
 					}
 				} catch (err) {
 					lastError = err instanceof Error ? err : new Error(String(err));
+					if (lastError.message.includes("(401)") || lastError.message.includes("(403)")) {
+						throw lastError;
+					}
 				}
 			}
 		}
@@ -607,17 +653,30 @@ async function callAiWithFallback(
 		return null;
 	};
 
-	try {
-		const resText = await runGeminiList(modelsToTry);
-		if (resText) return resText;
-	} catch (firstErr) {
-		const discovered = await discoverWorkerGeminiModels(apiKey);
-		const unseen = discovered.filter((m) => !modelsToTry.includes(m));
-		if (unseen.length > 0) {
-			const resText2 = await runGeminiList(unseen);
-			if (resText2) return resText2;
+	let overallGoogleErr: Error | null = null;
+	for (const baseEndpoint of googleEndpoints) {
+		try {
+			const resText = await runGeminiList(baseEndpoint, modelsToTry);
+			if (resText) return resText;
+		} catch (firstErr) {
+			overallGoogleErr = firstErr instanceof Error ? firstErr : new Error(String(firstErr));
+			if (baseEndpoint.includes("generativelanguage.googleapis.com")) {
+				const discovered = await discoverWorkerGeminiModels(apiKey);
+				const unseen = discovered.filter((m) => !modelsToTry.includes(m));
+				if (unseen.length > 0) {
+					try {
+						const resText2 = await runGeminiList(baseEndpoint, unseen);
+						if (resText2) return resText2;
+					} catch (secondErr) {
+						overallGoogleErr = secondErr instanceof Error ? secondErr : new Error(String(secondErr));
+					}
+				}
+			}
 		}
-		throw firstErr;
+	}
+
+	if (overallGoogleErr) {
+		throw overallGoogleErr;
 	}
 
 	throw new Error("Hiçbir yapay zeka modeli yanıt vermedi.");
